@@ -3,9 +3,13 @@ from pathlib import Path
 import shutil
 import re
 import subprocess
+from native_guide import patch as add_native_guide
 
 root = Path('compatibility')
 src = Path('extracted/Port0r Rally.app/Contents')
+executable = src / 'MacOS/port0r'
+executable.write_bytes(add_native_guide(executable.read_bytes()))
+print('Extended original Gamepad menu to 13 choices, including Guide; native key 110')
 # Optional cockpit packs are game assets, not needed to build the engine.
 shutil.rmtree(src / 'Resources/srallyc', ignore_errors=True)
 allowed = {'Info.plist', 'MacOS/port0r', 'Frameworks/libMoltenVK.dylib',

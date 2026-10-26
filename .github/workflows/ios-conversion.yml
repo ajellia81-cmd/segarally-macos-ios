@@ -67,8 +67,10 @@ jobs:
         run: python3 tools/smoke_sdl_policy.py
       - name: Verify C++ ROM import paths and touch input release
         run: python3 tools/smoke_paths_touch.py
-      - name: Verify silent SDL haptic warm-up and Guide settings
+      - name: Verify silent SDL haptic warm-up and foreground recovery
         run: python3 tools/smoke_controller_extras.py
+      - name: Verify Guide in the original native Gamepad menu
+        run: python3 tools/smoke_native_guide.py
       - name: Preserve component license notices
         run: |
           curl -fL https://raw.githubusercontent.com/jacquesdupontd/port0r/main/THIRD-PARTY-NOTICES.txt -o build/SegaRally.app/THIRD-PARTY-NOTICES.txt
@@ -89,6 +91,7 @@ jobs:
           name: segarally-ios-conversion-diagnostics
           path: |
             build/validation.json
+            build/native-guide-validation.json
             build/validation.log
             build/conversion.log
             build/shims/*.m

@@ -1,4 +1,4 @@
-"""Exercise actual haptic warm-up with fake motors, and Guide settings storage.
+"""Exercise actual haptic warm-up with fake motors, and foreground recovery.
 
 Uses native Apple SDK types but never starts a real haptic engine or controller.
 Physical controller latency, gestures and delivery still require device tests.
@@ -8,12 +8,6 @@ import subprocess
 
 overrides = Path('compatibility/shim/overrides').resolve()
 test = Path('build/controller_extras_smoke.m')
-guide = (overrides / 'AppKit_Guide.m').read_text()
-guide_helpers = (
-    guide[guide.index('static NSString *GuideSettingsPath'):guide.index('static void GuideEmit')] +
-    guide[guide.index('static NSString *GuideTitle'):guide.index('static void ReleaseGuides')] +
-    guide[guide.index('static BOOL SaveGuide'):guide.index('static void ConfigureGuides')]
-)
 test.write_text(r'''
 #import <Foundation/Foundation.h>
 #import <CoreHaptics/CoreHaptics.h>
@@ -36,8 +30,18 @@ static float lastIntensity;
 - (BOOL)cancelAndReturnError:(NSError **)error { return YES; }
 - (BOOL)scheduleParameterCurve:(CHHapticParameterCurve *)curve atTime:(NSTimeInterval)time error:(NSError **)error { return YES; }
 @end
-@interface TestEngine : NSObject @end
+static int engineStarts;
+@interface TestEngine : NSObject {
+    void (^_stopped)(CHHapticEngineStoppedReason);
+    void (^_reset)(void);
+}
+@property(nonatomic,copy) void (^stoppedHandler)(CHHapticEngineStoppedReason);
+@property(nonatomic,copy) void (^resetHandler)(void);
+@end
 @implementation TestEngine
+@synthesize stoppedHandler = _stopped;
+@synthesize resetHandler = _reset;
+- (BOOL)startAndReturnError:(NSError **)error { engineStarts++; return YES; }
 - (id<CHHapticPatternPlayer>)createPlayerWithPattern:(CHHapticPattern *)pattern error:(NSError **)error {
     assert(pattern != nil); playerCreations++; return [TestPlayer new];
 }
@@ -49,11 +53,13 @@ static float lastIntensity;
 @property(nonatomic, strong) TestEngine *engine;
 @property(nonatomic, strong) id<CHHapticPatternPlayer> player;
 - (int)setIntensity:(float)intensity;
+- (void)cleanup;
 @end
 @implementation SDL_RumbleMotor
 @synthesize engine = _testEngine;
 @synthesize player = _testPlayer;
 - (int)setIntensity:(float)intensity { originalCalls++; lastIntensity = intensity; return 0; }
+- (void)cleanup { self.player = nil; self.engine = nil; }
 @end
 ''' + '#import "' + str(overrides / 'AppKit_Haptics.m') + '"\n' + r'''
 static SDL_RumbleMotor *motor;
@@ -62,11 +68,6 @@ static int Rumble(void *controller, uint16_t low, uint16_t high, uint32_t durati
 }
 static int Supported(void *controller) { return 1; }
 static int Unsupported(void *controller) { return 0; }
-static NSString *testHome;
-static NSString *GuideTestHome(void) { return testHome; }
-#define NSHomeDirectory GuideTestHome
-''' + guide_helpers + r'''
-#undef NSHomeDirectory
 int main(void) { @autoreleasepool {
     assert(originalIntensity != NULL);
     motor = [SDL_RumbleMotor new]; motor.engine = [TestEngine new];
@@ -80,16 +81,25 @@ int main(void) { @autoreleasepool {
     int calls = originalCalls;
     Port0rWarmControllerHaptics((void *)0x1234, Rumble, Rumble, Unsupported, Unsupported);
     assert(originalCalls == calls);
+    hapticsForeground = NO;
+    TestEngine *sameEngine = motor.engine;
+    motor.engine.stoppedHandler(CHHapticEngineStoppedReasonApplicationSuspended);
+    assert(motor.engine == sameEngine && motor.player == nil);
+    assert([objc_getAssociatedObject(motor, &needsRestartKey) boolValue]);
+    [motor setIntensity:0.5f]; assert(lastIntensity == 0 && engineStarts == 0);
+    ResumeMotors();
+    assert(engineStarts == 1 && motor.engine == sameEngine && motor.player != nil);
+    assert(playerCreations == 2 && starts == 2 && stops == 2);
+    [motor setIntensity:0.5f]; assert(lastIntensity == 0.5f);
+    motor.engine.resetHandler();
+    assert(motor.player == nil);
+    [motor setIntensity:0.25f];
+    assert(engineStarts == 2 && playerCreations == 3 && lastIntensity == 0.25f);
+    [motor cleanup];
+    assert(motor.engine == nil && motor.player == nil && liveMotors.count == 0);
+    assert(sameEngine.stoppedHandler == nil && sameEngine.resetHandler == nil);
+    puts("PASS: stopped/reset engines retained, foreground engine/player recovery and normal vibration restored");
     puts("PASS: actual SDL motor warm-up creates and retains a silent player, reuses it and preserves real intensity; unsupported motors skipped");
-    testHome = [NSTemporaryDirectory() stringByAppendingPathComponent:NSUUID.UUID.UUIDString];
-    for (NSNumber *key in @[@(-1), @23, @36, @53, @9, @14, @12]) {
-        assert(SaveGuide(key.integerValue));
-        NSDictionary *saved = [NSDictionary dictionaryWithContentsOfFile:GuideSettingsPath()];
-        assert([saved[@"guideKey"] isEqual:key]);
-        assert(GuideTitle(key.integerValue).length > 0);
-    }
-    [NSFileManager.defaultManager removeItemAtPath:testHome error:nil];
-    puts("PASS: all Guide choices persist in guest-specific settings and have labels");
 } return 0; }
 ''')
 subprocess.run(['xcrun', '--sdk', 'macosx', 'clang', '-fobjc-arc', '-fsanitize=address',
