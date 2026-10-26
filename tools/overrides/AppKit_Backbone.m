@@ -10,29 +10,33 @@ static BOOL IsBackbone(GCController *controller) {
     NSString *identity = [NSString stringWithFormat:@"%@ %@", controller.vendorName, controller.productCategory];
     return [[identity lowercaseString] containsString:@"backbone"];
 }
-BOOL Port0rBackboneSelect(const char *name) {
-    if (!name || ![[[NSString stringWithUTF8String:name] lowercaseString] containsString:@"backbone"]) return NO;
-    GCController *matched = nil;
-    for (GCController *controller in GCController.controllers) {
+BOOL Port0rBackboneSelect(const char *name, int sdlDevices) {
+    NSArray<GCController *> *controllers = GCController.controllers;
+    BOOL named = name && [[[NSString stringWithUTF8String:name] lowercaseString] containsString:@"backbone"];
+    // Bluetooth names need not contain the manufacturer. A single GC device
+    // and a single SDL device identify the same pad without guessing its name.
+    GCController *matched = !named && sdlDevices == 1 && controllers.count == 1 ? controllers.firstObject : nil;
+    if (!named && !matched) return NO;
+    for (GCController *controller in (named ? controllers : @[])) {
         if (!IsBackbone(controller)) continue;
         // Without a stable shared device ID, never leak one pad's input into another.
         if (matched) return NO;
         matched = controller;
     }
     if (!matched) return NO;
-    GCControllerButtonInput *button = matched.extendedGamepad.buttonOptions;
-    if (!button) button = matched.physicalInputProfile.buttons[@"Button Share"];
-    if (!button) return NO;
-    button.preferredSystemGestureState = GCSystemGestureStateDisabled;
-    return button.isPressed;
+    GCControllerButtonInput *options = matched.extendedGamepad.buttonOptions;
+    GCControllerButtonInput *share = matched.physicalInputProfile.buttons[@"Button Share"];
+    options.preferredSystemGestureState = GCSystemGestureStateDisabled;
+    share.preferredSystemGestureState = GCSystemGestureStateDisabled;
+    return options.isPressed || share.isPressed;
 }
 static void ConfigureBackbones(void) {
     for (GCController *controller in GCController.controllers) {
-        if (!IsBackbone(controller)) continue;
+        if (!IsBackbone(controller) && GCController.controllers.count != 1) continue;
         GCControllerButtonInput *button = controller.extendedGamepad.buttonOptions;
-        if (!button) button = controller.physicalInputProfile.buttons[@"Button Share"];
         button.preferredSystemGestureState = GCSystemGestureStateDisabled;
-        NSLog(@"PORT0R Backbone Select polling bridge options=%@ buttons=%@", button,
+        controller.physicalInputProfile.buttons[@"Button Share"].preferredSystemGestureState = GCSystemGestureStateDisabled;
+        NSLog(@"PORT0R R2 Select controller=%@ category=%@ options=%@ buttons=%@", controller.vendorName, controller.productCategory, button,
               controller.physicalInputProfile.buttons.allKeys);
     }
 }

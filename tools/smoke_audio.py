@@ -13,12 +13,20 @@ test.write_text('#define PORT0R_AUDIO_TEST 1\n#import "' + str(overrides / 'Core
 #import <CoreAudio/AudioHardware.h>
 #include <assert.h>
 #include <string.h>
-static int starts, pauses, stops, disposals;
+static int starts, pauses, stops, disposals, enqueues;
+static OSStatus TestNewOutput(const AudioStreamBasicDescription *format, AudioQueueOutputCallback cb,
+ void *context, CFRunLoopRef loop, CFStringRef mode, UInt32 flags, AudioQueueRef *queue) {
+    assert(format && queue); *queue = (AudioQueueRef)(uintptr_t)0x1234; return noErr;
+}
+static OSStatus TestEnqueue(AudioQueueRef q, AudioQueueBufferRef buffer, UInt32 count,
+ const AudioStreamPacketDescription *packets) { assert(q && buffer && count == 0 && !packets); enqueues++; return noErr; }
 static OSStatus TestStart(AudioQueueRef q, const AudioTimeStamp *t) { starts++; return noErr; }
 static OSStatus TestPause(AudioQueueRef q) { pauses++; return noErr; }
 static OSStatus TestStop(AudioQueueRef q, Boolean immediate) { stops++; return noErr; }
 static OSStatus TestDispose(AudioQueueRef q, Boolean immediate) { disposals++; return noErr; }
 void *AudioFunction(const char *name) {
+    if (!strcmp(name, "AudioQueueNewOutput")) return (void *)TestNewOutput;
+    if (!strcmp(name, "AudioQueueEnqueueBuffer")) return (void *)TestEnqueue;
     if (!strcmp(name, "AudioQueueStart")) return (void *)TestStart;
     if (!strcmp(name, "AudioQueuePause")) return (void *)TestPause;
     if (!strcmp(name, "AudioQueueStop")) return (void *)TestStop;
@@ -43,7 +51,14 @@ int main(void) { @autoreleasepool {
     assert(fabsf(floats[1] - 0.2f) < 0.00001 && fabsf(floats[2] + 0.2f) < 0.00001);
     assert(floats[3] <= 1 && floats[4] >= -1 && floats[5] == 0);
     puts("PASS: audio gain doubles quiet PCM, preserves silence and bounds amplified integer/float peaks");
-    AudioQueueRef testQueue = (AudioQueueRef)(uintptr_t)0x1234;
+    AudioQueueRef testQueue = NULL;
+    pcm.mBitsPerChannel = 16; pcm.mFormatFlags = kAudioFormatFlagIsPacked | kAudioFormatFlagIsSignedInteger;
+    assert(AudioQueueNewOutput(&pcm, NULL, NULL, NULL, NULL, 0, &testQueue) == noErr);
+    int16_t routeSamples[] = {1000,-1000};
+    AudioQueueBuffer routeFixture = {sizeof routeSamples, routeSamples, sizeof routeSamples, NULL, 0, NULL, 0};
+    assert(AudioQueueEnqueueBuffer(testQueue, &routeFixture, 0, NULL) == noErr);
+    assert(enqueues == 1 && Port0rAudioCallsR2() == 1 && routeSamples[0] == 2000 && routeSamples[1] == -2000);
+    puts("PASS: actual NewOutput format registration and EnqueueBuffer path doubles PCM and forwards to native queue");
     assert(AudioQueueStart(testQueue, NULL) == noErr && starts == 1);
     OutputLifecycle(NO); OutputLifecycle(NO);
     assert(pauses == 1 && starts == 1);
@@ -60,7 +75,7 @@ int main(void) { @autoreleasepool {
     OutputLifecycle(NO); OutputLifecycle(YES);
     assert(starts == 3);
     assert(AudioQueueDispose(testQueue, true) == noErr && disposals == 1);
-    assert(queueIntent.count == 0);
+    assert(queueIntent.count == 0 && queueFormats.count == 0);
     puts("PASS: audio background pause, foreground resume, deferred start, user pause/stop intent and disposal");
     Port0rAudioAddress address = {kAudioHardwarePropertyDevices, kAudioObjectPropertyScopeGlobal, 0};
     uint32_t size = 0, device = 0;

@@ -4,6 +4,8 @@
 #import <dlfcn.h>
 #import <mach-o/dyld.h>
 #include <stdint.h>
+#include <stdatomic.h>
+#include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>
 #include "Port0rSDLSlots.h"
@@ -34,14 +36,26 @@ static int PollEvent(void *event) { Port0rWaitForForeground(); return pollEvent(
 static void PumpEvents(void) { Port0rWaitForForeground(); pumpEvents(); }
 static int WaitEvent(void *event) { Port0rWaitForForeground(); return waitEvent(event); }
 static int WaitEventTimeout(void *event, int timeout) { Port0rWaitForForeground(); return waitEventTimeout(event, timeout); }
-extern BOOL Port0rBackboneSelect(const char *name);
+extern BOOL Port0rBackboneSelect(const char *name, int sdlDevices);
+static int (*numJoysticks)(void);
+static _Atomic uint64_t selectReadsR2;
+uint64_t Port0rInputCallsR2(void) { return atomic_load(&selectReadsR2); }
 static uint8_t (*getControllerButton)(void *, int);
 static const char *(*controllerName)(void *);
 static uint8_t ControllerButton(void *controller, int button) {
     uint8_t native = getControllerButton(controller, button);
     // Merge into SDL BACK itself: native settings/rebinding and edge detection remain intact.
-    if (native || button != 4 || !controller) return native;
-    return Port0rBackboneSelect(controllerName(controller)) ? 1 : 0;
+    if (button != 4 || !controller) return native;
+    uint64_t reads = atomic_fetch_add(&selectReadsR2, 1);
+    const char *name = controllerName(controller);
+    BOOL bridge = Port0rBackboneSelect(name, numJoysticks());
+    static _Atomic bool lastNative, lastBridge;
+    BOOL previousNative = atomic_exchange(&lastNative, !!native), previousBridge = atomic_exchange(&lastBridge, bridge);
+    if (!reads || previousNative != !!native || previousBridge != bridge) {
+        NSLog(@"PORT0R R2 Select read=%llu SDL=%s devices=%d native=%u bridge=%d",
+              (unsigned long long)reads + 1, name ?: "(null)", numJoysticks(), native, bridge);
+    }
+    return native || bridge ? 1 : 0;
 }
 #ifndef PORT0R_POLICY_TEST
 extern void Port0rWarmControllerHaptics(void *controller,
@@ -73,9 +87,10 @@ static int ApplyPolicy(void *raw, uint32_t bytes) {
     hasTriggers = table[PORT0R_SLOT_SDL_GameControllerHasRumbleTriggers];
     if (openController) table[PORT0R_SLOT_SDL_GameControllerOpen] = (void *)OpenController;
 #endif
+    numJoysticks = table[PORT0R_SLOT_SDL_NumJoysticks];
     getControllerButton = table[PORT0R_SLOT_SDL_GameControllerGetButton];
     controllerName = table[PORT0R_SLOT_SDL_GameControllerName];
-    if (!getControllerButton || !controllerName) return -1;
+    if (!getControllerButton || !controllerName || !numJoysticks) return -1;
     table[PORT0R_SLOT_SDL_GameControllerGetButton] = (void *)ControllerButton;
     pollEvent = table[PORT0R_SLOT_SDL_PollEvent];
     pumpEvents = table[PORT0R_SLOT_SDL_PumpEvents];

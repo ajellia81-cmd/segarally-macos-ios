@@ -14,6 +14,8 @@
 #endif
 
 static IMP originalIntensity;
+static _Atomic uint64_t hapticRequestsR2;
+uint64_t Port0rHapticCallsR2(void) { return atomic_load(&hapticRequestsR2); }
 static _Thread_local bool warmingMotors;
 static IMP originalCleanup;
 static NSHashTable *liveMotors;
@@ -112,6 +114,11 @@ static BOOL PrepareSilentPlayer(id motor) {
 }
 static int SetIntensity(id motor, SEL cmd, float intensity) {
     @synchronized (motor) {
+        if (!warmingMotors && intensity > 0) {
+            uint64_t event = atomic_fetch_add(&hapticRequestsR2, 1);
+            if (event < 4) NSLog(@"PORT0R R2 haptic request=%llu intensity=%.4f foreground=%d engine=%@ player=%@",
+                (unsigned long long)event + 1, intensity, hapticsForeground, MotorGet(motor, @"engine"), MotorGet(motor, @"player"));
+        }
         if (warmingMotors) {
             PrepareSilentPlayer(motor);
             intensity = 0; // never send the warm-up's non-zero request to hardware

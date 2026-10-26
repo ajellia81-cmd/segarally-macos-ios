@@ -4,6 +4,7 @@
 #import <QuartzCore/QuartzCore.h>
 #import <objc/runtime.h>
 #import <stdatomic.h>
+#import <dlfcn.h>
 
 static _Atomic uint64_t presentedFrames;
 static _Atomic uint64_t requestedFrames;
@@ -54,7 +55,7 @@ static void UpdateFPS(void) {
                 if (![NSStringFromClass(window.rootViewController.class) isEqualToString:@"ShimViewController"]) continue;
                 fpsLabel = [UILabel new];
                 fpsLabel.text = @"Present -- | Render --\nGame FPS -- | Output --";
-                fpsLabel.numberOfLines = 3;
+                fpsLabel.numberOfLines = 4;
                 fpsLabel.textColor = UIColor.whiteColor;
                 fpsLabel.backgroundColor = [UIColor.blackColor colorWithAlphaComponent:0.7];
                 fpsLabel.font = [UIFont monospacedDigitSystemFontOfSize:12 weight:UIFontWeightSemibold];
@@ -69,7 +70,7 @@ static void UpdateFPS(void) {
                     [fpsLabel.topAnchor constraintEqualToAnchor:window.safeAreaLayoutGuide.topAnchor constant:4],
                     [fpsLabel.leadingAnchor constraintEqualToAnchor:window.safeAreaLayoutGuide.leadingAnchor constant:8],
                     [fpsLabel.widthAnchor constraintEqualToConstant:315],
-                    [fpsLabel.heightAnchor constraintEqualToConstant:58]]];
+                    [fpsLabel.heightAnchor constraintEqualToConstant:76]]];
                 break;
             }
             if (fpsLabel) break;
@@ -82,13 +83,20 @@ static void UpdateFPS(void) {
     uint64_t pixels = atomic_load_explicit(&outputPixels, memory_order_relaxed);
     double elapsed = lastUpdate ? now - lastUpdate : 0;
     lastUpdate = now;
+    uint64_t (*audio)(void) = dlsym(RTLD_DEFAULT, "Port0rAudioCallsR2");
+    uint64_t (*input)(void) = dlsym(RTLD_DEFAULT, "Port0rInputCallsR2");
+    uint64_t (*haptic)(void) = dlsym(RTLD_DEFAULT, "Port0rHapticCallsR2");
+    unsigned long long a = audio ? audio() : 0, b = input ? input() : 0, h = haptic ? haptic() : 0;
+    static unsigned reports;
+    if (!(reports++ % 5)) NSLog(@"PORT0R R2 runtime A=%llu S=%llu H=%llu audioSymbol=%d inputSymbol=%d hapticSymbol=%d",
+        a,b,h,audio != NULL,input != NULL,haptic != NULL);
     if (elapsed > 0 && fpsLabel) {
         // A rendered/presented frame can repeat the same emulated arcade frame.
         // The closed-source core's frame-counter ABI is not documented, so do
         // not call an unknown export or display a guessed constant 60 as a measurement.
-        fpsLabel.text = [NSString stringWithFormat:@"Present %.1f | Render %.1f\nGame FPS -- | Output %ux%u\nDisplay %.1f / Max %ld",
+        fpsLabel.text = [NSString stringWithFormat:@"Present %.1f | Render %.1f\nGame FPS -- | Output %ux%u\nDisplay %.1f / Max %ld\nR2 | A %llu | S %llu | H %llu",
                          frames / elapsed, requests / elapsed, (unsigned)(pixels >> 32), (unsigned)pixels,
-                         ticks / elapsed, (long)UIScreen.mainScreen.maximumFramesPerSecond];
+                         ticks / elapsed, (long)UIScreen.mainScreen.maximumFramesPerSecond, a, b, h];
         [fpsLabel.superview bringSubviewToFront:fpsLabel];
     }
 }

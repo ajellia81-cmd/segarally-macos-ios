@@ -92,6 +92,8 @@ jobs:
         run: python3 tools/smoke_native_guide.py
       - name: Verify truthful iOS GPU capabilities
         run: python3 tools/smoke_gpu_capabilities.py
+      - name: Verify R2 runtime hook linkage
+        run: python3 tools/smoke_runtime_r2.py
       - name: Preserve component license notices
         run: |
           curl -fL https://raw.githubusercontent.com/jacquesdupontd/port0r/main/THIRD-PARTY-NOTICES.txt -o build/SegaRally.app/THIRD-PARTY-NOTICES.txt

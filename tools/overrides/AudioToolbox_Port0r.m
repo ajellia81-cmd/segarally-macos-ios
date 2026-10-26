@@ -4,6 +4,8 @@
 #import <dlfcn.h>
 #include <math.h>
 #include <stdint.h>
+#include <stdatomic.h>
+#include <stdbool.h>
 #if TARGET_OS_IOS
 #import <AVFAudio/AVFAudio.h>
 #import <UIKit/UIKit.h>
@@ -34,6 +36,26 @@ static NSMutableDictionary<NSValue *, NSNumber *> *queueIntent;
 static NSRecursiveLock *queueLock;
 static BOOL outputActive = YES;
 static NSMutableDictionary<NSValue *, NSValue *> *queueFormats;
+static _Atomic uint64_t audioCallsR2;
+static _Atomic bool audioMeasuredR2;
+uint64_t Port0rAudioCallsR2(void) { return atomic_load(&audioCallsR2); }
+static float ProbePCM(AudioQueueBufferRef buffer, AudioStreamBasicDescription format) {
+    if (!buffer || !buffer->mAudioData || buffer->mAudioDataByteSize > buffer->mAudioDataBytesCapacity ||
+        format.mFormatID != kAudioFormatLinearPCM || !(format.mFormatFlags & kAudioFormatFlagIsPacked) ||
+        (format.mFormatFlags & (kAudioFormatFlagIsBigEndian | kAudioFormatFlagIsNonInterleaved))) return -1;
+    float peak = 0;
+    UInt32 samples = buffer->mAudioDataByteSize / (format.mBitsPerChannel == 16 ? 2 : 4);
+    if (samples > 256) samples = 256;
+    for (UInt32 i = 0; i < samples; i++) {
+        float value;
+        if (format.mBitsPerChannel == 16 && (format.mFormatFlags & kAudioFormatFlagIsSignedInteger) &&
+            !(format.mFormatFlags & kAudioFormatFlagIsFloat)) value = ((int16_t *)buffer->mAudioData)[i] / 32768.0f;
+        else if (format.mBitsPerChannel == 32 && (format.mFormatFlags & kAudioFormatFlagIsFloat)) value = ((float *)buffer->mAudioData)[i];
+        else return -1;
+        if (isfinite(value) && fabsf(value) > peak) peak = fabsf(value);
+    }
+    return peak;
+}
 static const float audioGain = 2.0f;
 static float LimitSample(float sample) {
     if (!isfinite(sample)) return 0;
@@ -122,7 +144,16 @@ OSStatus AudioQueueEnqueueBuffer(AudioQueueRef queue, AudioQueueBufferRef buffer
     NSValue *stored = queueFormats[[NSValue valueWithPointer:queue]];
     if (stored) [stored getValue:&format size:sizeof format];
     [queueLock unlock];
+    uint64_t calls = atomic_fetch_add(&audioCallsR2, 1);
+    BOOL inspect = !atomic_load(&audioMeasuredR2);
+    float before = inspect ? ProbePCM(buffer, format) : 0;
     BoostPCM(buffer, format);
+    if (inspect && (before > 0 || before < 0) && !atomic_exchange(&audioMeasuredR2, true)) {
+        float after = ProbePCM(buffer, format);
+        NSLog(@"PORT0R R2 AUDIO calls=%llu format=%u flags=%u bits=%u bytes=%u peakBefore=%.5f peakAfter=%.5f gain=2x supported=%d",
+              (unsigned long long)calls + 1, (unsigned)format.mFormatID, (unsigned)format.mFormatFlags,
+              (unsigned)format.mBitsPerChannel, buffer ? (unsigned)buffer->mAudioDataByteSize : 0, before, after, before >= 0);
+    }
     OSStatus (*real)(AudioQueueRef, AudioQueueBufferRef, UInt32, const AudioStreamPacketDescription *) = AudioFunction("AudioQueueEnqueueBuffer");
     return real ? real(queue, buffer, count, packets) : kAudio_ParamError;
 }

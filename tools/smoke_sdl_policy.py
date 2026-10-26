@@ -7,7 +7,8 @@ test = Path('build/sdl_policy_smoke.m')
 test.write_text('#define PORT0R_POLICY_TEST 1\n#import "' + str(overrides / 'AppKit_SDLPolicy.m') + '"\n' + r'''
 #include <assert.h>
 static BOOL backPressed;
-BOOL Port0rBackboneSelect(const char *name) { return backPressed && name && !strcmp(name, "Backbone Pro"); }
+BOOL Port0rBackboneSelect(const char *name, int sdlDevices) { return backPressed && name && !strcmp(name, "Backbone Pro"); }
+static int NativeDevices(void) { return 2; }
 static uint8_t nativeButton;
 static uint8_t NativeButton(void *controller, int button) { return nativeButton; }
 static const char *NativeName(void *controller) { return controller == (void *)1 ? "Backbone Pro" : "Other pad"; }
@@ -36,6 +37,7 @@ int main(void) { @autoreleasepool {
     table[PORT0R_SLOT_SDL_PumpEvents] = (void *)NativePump;
     table[PORT0R_SLOT_SDL_WaitEvent] = (void *)NativeWait;
     table[PORT0R_SLOT_SDL_WaitEventTimeout] = (void *)NativeWaitTimeout;
+    table[PORT0R_SLOT_SDL_NumJoysticks] = (void *)NativeDevices;
     table[PORT0R_SLOT_SDL_GameControllerGetButton] = (void *)NativeButton;
     table[PORT0R_SLOT_SDL_GameControllerName] = (void *)NativeName;
     assert(ApplyPolicy(table, sizeof table) == 0);

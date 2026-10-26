@@ -170,18 +170,27 @@ int main(void) { @autoreleasepool {
     pad.vendorName = @"Backbone"; pad.productCategory = @"Pro";
     pad.extendedGamepad = profile; pad.physicalInputProfile = profile;
     testControllers = @[pad];
-    assert(!Port0rBackboneSelect("Backbone Pro"));
+    assert(!Port0rBackboneSelect("Backbone Pro", 2));
     button.isPressed = YES;
-    assert(Port0rBackboneSelect("Backbone Pro"));
+    assert(Port0rBackboneSelect("Backbone Pro", 2));
     assert(button.preferredSystemGestureState == GCSystemGestureStateDisabled);
-    assert(!Port0rBackboneSelect("Other pad") && !Port0rBackboneSelect(NULL));
-    button.isPressed = NO; assert(!Port0rBackboneSelect("Backbone Pro"));
+    assert(!Port0rBackboneSelect("Other pad", 2) && !Port0rBackboneSelect(NULL, 2));
+    pad.vendorName = @"Generic Controller";
+    assert(Port0rBackboneSelect("Generic Controller", 1));
+    assert(!Port0rBackboneSelect("Generic Controller", 2));
+    pad.vendorName = @"Backbone";
+    button.isPressed = NO; assert(!Port0rBackboneSelect("Backbone Pro", 2));
+    SelectButton *share = [SelectButton new]; share.isPressed = YES;
+    profile.buttons = @{@"Button Share":share};
+    assert(Port0rBackboneSelect("Backbone Pro", 2)); // Options exists but Share is the pressed physical input
+    assert(share.preferredSystemGestureState == GCSystemGestureStateDisabled);
+    share.isPressed = NO;
     profile.buttonOptions = nil; profile.buttons = @{@"Button Share":button};
-    button.isPressed = YES; assert(Port0rBackboneSelect("Backbone Pro"));
-    testControllers = @[pad,pad]; assert(!Port0rBackboneSelect("Backbone Pro"));
-    testControllers = @[]; assert(!Port0rBackboneSelect("Backbone Pro"));
+    button.isPressed = YES; assert(Port0rBackboneSelect("Backbone Pro", 2));
+    testControllers = @[pad,pad]; assert(!Port0rBackboneSelect("Backbone Pro", 2));
+    testControllers = @[]; assert(!Port0rBackboneSelect("Backbone Pro", 2));
     method_setImplementation(method, original);
-    puts("PASS: actual Backbone bridge polls press/release, handles Share fallback/disconnect and refuses ambiguous pads");
+    puts("PASS: actual Select bridge polls press/release, handles generic single-pad names and simultaneous Options/Share objects, refuses ambiguous pads");
 } return 0; }
 ''')
 subprocess.run(['xcrun', '--sdk', 'macosx', 'clang', '-fobjc-arc', '-fsanitize=address',
