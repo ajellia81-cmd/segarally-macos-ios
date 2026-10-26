@@ -23,7 +23,27 @@ s = s.replace('CGSize s = UIScreen.mainScreen.nativeBounds.size;',
 s = s.replace('ScreenPixels().width / 2', 'ScreenPixels().width / gScale')
 s = s.replace('ScreenPixels().height / 2', 'ScreenPixels().height / gScale')
 s = s.replace('p.width / 2, p.height / 2', 'p.width / gScale, p.height / gScale')
+# SDL stores modes in a CFArray with kCFTypeArrayCallBacks. A pointer to a
+# static C struct is not a CF object and crashes when that array retains it.
+s = s.replace('static struct ShimDisplayMode gMode;', '''static CGDisplayModeRef NativeMode(void) {
+    static CFDictionaryRef mode;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        mode = CFDictionaryCreate(NULL, NULL, NULL, 0,
+                                  &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
+    });
+    return (CGDisplayModeRef)mode;
+}''')
+s = s.replace('return &gMode;', 'return (CGDisplayModeRef)CFRetain(NativeMode());')
+s = s.replace('{ &gMode }', '{ NativeMode() }')
+s = s.replace('modes, 1, NULL)', 'modes, 1, &kCFTypeArrayCallBacks)')
+s = s.replace('void CGDisplayModeRelease(CGDisplayModeRef m) {}',
+              'void CGDisplayModeRelease(CGDisplayModeRef m) { if (m) CFRelease(m); }')
+s = s.replace('CGDisplayModeRetain(CGDisplayModeRef m) { return m; }',
+              'CGDisplayModeRetain(CGDisplayModeRef m) { return m ? (CGDisplayModeRef)CFRetain(m) : NULL; }')
 p.write_text(s)
+for override in (Path(__file__).parent / 'overrides').glob('*.m'):
+    shutil.copyfile(override, root / 'shim/overrides' / override.name)
 p = root / 'shim/overrides/AppKit.m'
 s = p.read_text().replace('return @"iPad";', 'return @"iPhone / iPad Native";')
 s = s.replace('CGRectMake(0, 0, 1376, 1032)',
