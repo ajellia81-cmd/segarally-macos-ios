@@ -74,3 +74,41 @@ print(result.stdout)
 if result.returncode:
     print(result.stderr[-6000:])
     raise SystemExit(result.returncode)
+
+# Compile the actual button implementation with a minimal Foundation-backed
+# UIButton stand-in. This checks Objective-C accessors and press/release methods,
+# which the C-only key-state tests cannot exercise.
+source = (overrides / 'AppKit_Touch.m').read_text()
+button = source[source.index('@interface Port0rTouchButton'):source.index('@interface Port0rTouchOverlay')]
+button_test = Path('build/touch_button_smoke.m')
+button_test.write_text('#import <Foundation/Foundation.h>\n#include <assert.h>\n' +
+    '#include "' + str(overrides / 'Port0rTouchState.h') + '"\n' + r"""
+@interface UIButton : NSObject
+@property double alpha;
+@end
+@implementation UIButton @end
+static Port0rTouchState touchState;
+static int downs, ups;
+static void EmitTouch(unsigned short key, bool down) {
+    assert(key == 126); if (down) downs++; else ups++;
+}
+""" + button + r"""
+int main(void) { @autoreleasepool {
+    Port0rTouchButton *button = [Port0rTouchButton new];
+    assert([button respondsToSelector:@selector(port0rKeyHeld)]);
+    assert([button respondsToSelector:@selector(setPort0rKeyHeld:)]);
+    button.macKey = 126;
+    assert(button.macKey == 126 && !button.port0rKeyHeld);
+    [button releaseKey]; // startup with a controller connected
+    assert(ups == 0);
+    Port0rTouchSetEnabled(&touchState, true, EmitTouch);
+    [button pressKey]; [button pressKey];
+    assert(button.port0rKeyHeld && downs == 1);
+    [button releaseKey]; [button releaseKey];
+    assert(!button.port0rKeyHeld && ups == 1);
+    puts("PASS: actual Objective-C button accessors, initial release, repeated press/release");
+} return 0; }
+""")
+subprocess.run(['xcrun','--sdk','macosx','clang','-fobjc-arc','-fsanitize=address',
+                '-framework','Foundation',str(button_test),'-o','build/touch_button_smoke'],check=True)
+subprocess.run(['build/touch_button_smoke'],check=True)

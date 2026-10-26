@@ -5,20 +5,25 @@ extern void Port0rTouchKey(unsigned short code, BOOL down);
 static Port0rTouchState touchState;
 static void EmitTouch(unsigned short key, bool down) { Port0rTouchKey(key, down); }
 
-@interface Port0rTouchButton : UIButton
+@interface Port0rTouchButton : UIButton {
+    unsigned short _port0rMacKey;
+    BOOL _port0rKeyHeld;
+}
 @property unsigned short macKey;
-@property BOOL held;
+@property BOOL port0rKeyHeld;
 - (void)releaseKey;
 @end
 @implementation Port0rTouchButton
+@synthesize macKey = _port0rMacKey;
+@synthesize port0rKeyHeld = _port0rKeyHeld;
 - (void)pressKey {
-    if (self.held || !touchState.enabled) return;
-    self.held = YES; self.alpha = 1;
+    if (self.port0rKeyHeld || !touchState.enabled) return;
+    self.port0rKeyHeld = YES; self.alpha = 1;
     Port0rTouchChange(&touchState, self.macKey, true, EmitTouch);
 }
 - (void)releaseKey {
-    if (!self.held) return;
-    self.held = NO; self.alpha = 0.65;
+    if (!self.port0rKeyHeld) return;
+    self.port0rKeyHeld = NO; self.alpha = 0.65;
     Port0rTouchChange(&touchState, self.macKey, false, EmitTouch);
 }
 @end
