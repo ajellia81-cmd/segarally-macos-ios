@@ -78,7 +78,7 @@ static BOOL ImportDownloads(NSString *downloads, NSString *roms) {
         if (![fm fileExistsAtPath:source isDirectory:&directory] || directory) { ok = NO; continue; }
         NSFileHandle *handle = [NSFileHandle fileHandleForReadingAtPath:source];
         NSData *magic = [handle readDataOfLength:4]; [handle closeFile];
-        const unsigned char *b = magic.bytes;
+        const unsigned char *b = (const unsigned char *)magic.bytes;
         if (magic.length != 4 || b[0] != 'P' || b[1] != 'K' || b[2] != 3 || b[3] != 4) {
             NSLog(@"PORT0R Downloads rejected %@: not a ZIP local-file header", match); ok = NO; continue;
         }
