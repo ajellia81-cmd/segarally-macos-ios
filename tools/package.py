@@ -4,8 +4,65 @@ import hashlib
 import json
 import plistlib
 import shutil
+import struct
 import subprocess
 import zipfile
+
+
+def zero_fill_sections(data):
+    """Return section headers requiring offset=0 (Mach-O loader invariant).
+
+    Zero-fill sections occupy virtual memory only. Normalizing the file-offset
+    field does not move bytes or change addresses, sizes or TLS descriptors.
+    Only little-endian, thin 64-bit Mach-O is accepted by this ARM64 pipeline.
+    """
+    if len(data) < 32 or data[:4] != b'\xcf\xfa\xed\xfe':
+        raise ValueError('Expected a thin 64-bit Mach-O')
+    ncmds, sizeofcmds = struct.unpack_from('<II', data, 16)
+    end = 32 + sizeofcmds
+    if end > len(data):
+        raise ValueError('Truncated Mach-O load commands')
+    pos = 32
+    sections = []
+    for _ in range(ncmds):
+        if pos + 8 > end:
+            raise ValueError('Truncated load command')
+        cmd, size = struct.unpack_from('<II', data, pos)
+        if size < 8 or size % 8 or pos + size > end:
+            raise ValueError('Invalid load command size')
+        if cmd == 0x19:  # LC_SEGMENT_64
+            if size < 72:
+                raise ValueError('Truncated segment command')
+            count = struct.unpack_from('<I', data, pos + 64)[0]
+            if 72 + count * 80 > size:
+                raise ValueError('Truncated section headers')
+            for i in range(count):
+                sec = pos + 72 + i * 80
+                flags = struct.unpack_from('<I', data, sec + 64)[0]
+                if flags & 0xff in (0x1, 0xc, 0x12):
+                    name = data[sec:sec+16].split(b'\0')[0].decode()
+                    seg = data[sec+16:sec+32].split(b'\0')[0].decode()
+                    offset = struct.unpack_from('<I', data, sec + 48)[0]
+                    sections.append((seg + '/' + name, sec + 48, offset))
+        pos += size
+    if pos != end:
+        raise ValueError('Load-command count/size mismatch')
+    return sections
+
+
+def normalize_zero_fill(path):
+    data = bytearray(path.read_bytes())
+    changes = []
+    for name, field, old in zero_fill_sections(data):
+        if old:
+            struct.pack_into('<I', data, field, 0)
+            changes.append({'section': name, 'old_offset': old, 'new_offset': 0})
+    if changes:
+        path.write_bytes(data)
+    if any(offset for _, _, offset in zero_fill_sections(path.read_bytes())):
+        raise ValueError(f'Invalid zero-fill offset remains: {path}')
+    return changes
+
 
 app = Path('build/SegaRally.app').resolve()
 def run(*args):
@@ -37,6 +94,7 @@ report = {'device_launch_verified': False, 'original_resolution_percentages': 'u
           'macho': [], 'removed_game_assets': 'Resources/srallyc cockpit packs',
           'signing': 'ad-hoc only, no Apple identity/profile; LiveContainer must re-sign'}
 for m in machos:
+    zero_fill_fixes = normalize_zero_fill(m)
     assert run('lipo', '-archs', str(m)).strip() == 'arm64', m
     version = run('vtool', '-show-build', str(m))
     assert 'platform IOS' in version, (m, version)
@@ -44,7 +102,8 @@ for m in machos:
     assert 'cryptid 1' not in loads, m
     deps = run('otool', '-L', str(m))
     assert '/System/Library/Frameworks/AppKit.framework/' not in deps, m
-    report['macho'].append({'path': str(m.relative_to(app)), 'build_version': version, 'dependencies': deps})
+    report['macho'].append({'path': str(m.relative_to(app)), 'build_version': version,
+                            'dependencies': deps, 'zero_fill_fixes': zero_fill_fixes})
     # Replace conversion entitlements, including placeholder team IDs, with a
     # plain ad-hoc signature. LiveContainer supplies its own signing context.
     run('codesign', '--force', '--sign', '-', str(m))
@@ -52,6 +111,7 @@ run('codesign', '--force', '--sign', '-', str(app))
 run('codesign', '--verify', '--deep', '--strict', str(app))
 for m in machos:
     run('codesign', '--verify', '--strict', str(m))
+    assert all(offset == 0 for _, _, offset in zero_fill_sections(m.read_bytes())), m
 payload = Path('build/Payload')
 payload.mkdir(exist_ok=True)
 shutil.copytree(app, payload / app.name, symlinks=True)
