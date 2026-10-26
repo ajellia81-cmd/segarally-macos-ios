@@ -6,6 +6,11 @@ overrides = Path('compatibility/shim/overrides').resolve()
 test = Path('build/sdl_policy_smoke.m')
 test.write_text('#define PORT0R_POLICY_TEST 1\n#import "' + str(overrides / 'AppKit_SDLPolicy.m') + '"\n' + r'''
 #include <assert.h>
+static BOOL backPressed;
+BOOL Port0rBackboneSelect(const char *name) { return backPressed && name && !strcmp(name, "Backbone Pro"); }
+static uint8_t nativeButton;
+static uint8_t NativeButton(void *controller, int button) { return nativeButton; }
+static const char *NativeName(void *controller) { return controller == (void *)1 ? "Backbone Pro" : "Other pad"; }
 static int gateCalls, pollCalls, pumpCalls, waitCalls;
 void Port0rWaitForForeground(void) { gateCalls++; }
 static int NativePoll(void *event) { pollCalls++; return 7; }
@@ -31,7 +36,23 @@ int main(void) { @autoreleasepool {
     table[PORT0R_SLOT_SDL_PumpEvents] = (void *)NativePump;
     table[PORT0R_SLOT_SDL_WaitEvent] = (void *)NativeWait;
     table[PORT0R_SLOT_SDL_WaitEventTimeout] = (void *)NativeWaitTimeout;
+    table[PORT0R_SLOT_SDL_GameControllerGetButton] = (void *)NativeButton;
+    table[PORT0R_SLOT_SDL_GameControllerName] = (void *)NativeName;
     assert(ApplyPolicy(table, sizeof table) == 0);
+    uint8_t (*readButton)(void *, int) = table[PORT0R_SLOT_SDL_GameControllerGetButton];
+    assert(readButton((void *)1, 4) == 0);
+    backPressed = YES;
+    assert(readButton((void *)1, 4) == 1);
+    assert(readButton((void *)1, 5) == 0); // Guide unaffected
+    assert(readButton((void *)2, 4) == 0); // other pad unaffected
+    backPressed = NO;
+    assert(readButton((void *)1, 4) == 0); // release has no stale key
+    nativeButton = 1;
+    backPressed = YES;
+    assert(readButton((void *)1, 4) == 1); // no second keyboard coin
+    assert(readButton((void *)2, 5) == 1); // native inputs preserved
+    nativeButton = 0; backPressed = NO;
+    puts("PASS: Select press/release merged into native SDL BACK; Guide/other pads preserved and no duplicate coin injection");
     assert(((int(*)(void *))table[PORT0R_SLOT_SDL_PollEvent])(NULL) == 7);
     ((void(*)(void))table[PORT0R_SLOT_SDL_PumpEvents])();
     assert(((int(*)(void *))table[PORT0R_SLOT_SDL_WaitEvent])(NULL) == 8);

@@ -80,7 +80,7 @@ slots = re.findall(r'^SDL_\w+$', expanded, re.M)
 assert len(slots) > 800 and len(slots) == len(set(slots))
 names = ['SDL_GetVersion', 'SDL_CreateWindow', 'SDL_GetWindowFlags', 'SDL_SetWindowFullscreen',
          'SDL_SetWindowDisplayMode', 'SDL_SetWindowSize', 'SDL_PollEvent', 'SDL_PumpEvents',
-         'SDL_WaitEvent', 'SDL_WaitEventTimeout', 'SDL_GameControllerOpen',
+         'SDL_WaitEvent', 'SDL_WaitEventTimeout', 'SDL_GameControllerOpen', 'SDL_GameControllerGetButton', 'SDL_GameControllerName',
          'SDL_GameControllerRumble', 'SDL_GameControllerRumbleTriggers',
          'SDL_GameControllerHasRumble', 'SDL_GameControllerHasRumbleTriggers']
 (root / 'shim/overrides/Port0rSDLSlots.h').write_text(

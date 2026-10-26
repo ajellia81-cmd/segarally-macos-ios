@@ -34,6 +34,15 @@ static int PollEvent(void *event) { Port0rWaitForForeground(); return pollEvent(
 static void PumpEvents(void) { Port0rWaitForForeground(); pumpEvents(); }
 static int WaitEvent(void *event) { Port0rWaitForForeground(); return waitEvent(event); }
 static int WaitEventTimeout(void *event, int timeout) { Port0rWaitForForeground(); return waitEventTimeout(event, timeout); }
+extern BOOL Port0rBackboneSelect(const char *name);
+static uint8_t (*getControllerButton)(void *, int);
+static const char *(*controllerName)(void *);
+static uint8_t ControllerButton(void *controller, int button) {
+    uint8_t native = getControllerButton(controller, button);
+    // Merge into SDL BACK itself: native settings/rebinding and edge detection remain intact.
+    if (native || button != 4 || !controller) return native;
+    return Port0rBackboneSelect(controllerName(controller)) ? 1 : 0;
+}
 #ifndef PORT0R_POLICY_TEST
 extern void Port0rWarmControllerHaptics(void *controller,
     int (*rumble)(void *, uint16_t, uint16_t, uint32_t),
@@ -64,6 +73,10 @@ static int ApplyPolicy(void *raw, uint32_t bytes) {
     hasTriggers = table[PORT0R_SLOT_SDL_GameControllerHasRumbleTriggers];
     if (openController) table[PORT0R_SLOT_SDL_GameControllerOpen] = (void *)OpenController;
 #endif
+    getControllerButton = table[PORT0R_SLOT_SDL_GameControllerGetButton];
+    controllerName = table[PORT0R_SLOT_SDL_GameControllerName];
+    if (!getControllerButton || !controllerName) return -1;
+    table[PORT0R_SLOT_SDL_GameControllerGetButton] = (void *)ControllerButton;
     pollEvent = table[PORT0R_SLOT_SDL_PollEvent];
     pumpEvents = table[PORT0R_SLOT_SDL_PumpEvents];
     waitEvent = table[PORT0R_SLOT_SDL_WaitEvent];
