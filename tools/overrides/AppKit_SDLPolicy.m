@@ -34,6 +34,21 @@ static int PollEvent(void *event) { Port0rWaitForForeground(); return pollEvent(
 static void PumpEvents(void) { Port0rWaitForForeground(); pumpEvents(); }
 static int WaitEvent(void *event) { Port0rWaitForForeground(); return waitEvent(event); }
 static int WaitEventTimeout(void *event, int timeout) { Port0rWaitForForeground(); return waitEventTimeout(event, timeout); }
+#ifndef PORT0R_POLICY_TEST
+extern void Port0rWarmControllerHaptics(void *controller,
+    int (*rumble)(void *, uint16_t, uint16_t, uint32_t),
+    int (*triggers)(void *, uint16_t, uint16_t, uint32_t),
+    int (*hasRumble)(void *), int (*hasTriggers)(void *));
+static void *(*openController)(int);
+static int (*controllerRumble)(void *, uint16_t, uint16_t, uint32_t);
+static int (*triggerRumble)(void *, uint16_t, uint16_t, uint32_t);
+static int (*hasRumble)(void *), (*hasTriggers)(void *);
+static void *OpenController(int index) {
+    void *controller = openController(index);
+    if (controller) Port0rWarmControllerHaptics(controller, controllerRumble, triggerRumble, hasRumble, hasTriggers);
+    return controller;
+}
+#endif
 static int ApplyPolicy(void *raw, uint32_t bytes) {
     if (!raw || bytes != PORT0R_SDL_SLOTCOUNT * sizeof(void *)) return -1;
     void **table = raw;
@@ -41,6 +56,14 @@ static int ApplyPolicy(void *raw, uint32_t bytes) {
     if (!table[PORT0R_SLOT_SDL_GetVersion]) return -1;
     ((void (*)(PolicyVersion *))table[PORT0R_SLOT_SDL_GetVersion])(&version);
     if (version.major != 2 || version.minor != 30 || version.patch != 3) return -1;
+#ifndef PORT0R_POLICY_TEST
+    openController = table[PORT0R_SLOT_SDL_GameControllerOpen];
+    controllerRumble = table[PORT0R_SLOT_SDL_GameControllerRumble];
+    triggerRumble = table[PORT0R_SLOT_SDL_GameControllerRumbleTriggers];
+    hasRumble = table[PORT0R_SLOT_SDL_GameControllerHasRumble];
+    hasTriggers = table[PORT0R_SLOT_SDL_GameControllerHasRumbleTriggers];
+    if (openController) table[PORT0R_SLOT_SDL_GameControllerOpen] = (void *)OpenController;
+#endif
     pollEvent = table[PORT0R_SLOT_SDL_PollEvent];
     pumpEvents = table[PORT0R_SLOT_SDL_PumpEvents];
     waitEvent = table[PORT0R_SLOT_SDL_WaitEvent];

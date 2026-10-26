@@ -56,7 +56,9 @@ slots = re.findall(r'^SDL_\w+$', expanded, re.M)
 assert len(slots) > 800 and len(slots) == len(set(slots))
 names = ['SDL_GetVersion', 'SDL_CreateWindow', 'SDL_GetWindowFlags', 'SDL_SetWindowFullscreen',
          'SDL_SetWindowDisplayMode', 'SDL_SetWindowSize', 'SDL_PollEvent', 'SDL_PumpEvents',
-         'SDL_WaitEvent', 'SDL_WaitEventTimeout']
+         'SDL_WaitEvent', 'SDL_WaitEventTimeout', 'SDL_GameControllerOpen',
+         'SDL_GameControllerRumble', 'SDL_GameControllerRumbleTriggers',
+         'SDL_GameControllerHasRumble', 'SDL_GameControllerHasRumbleTriggers']
 (root / 'shim/overrides/Port0rSDLSlots.h').write_text(
     '// Generated from Mac SDL 2.30.3 dynapi ABI, zlib-licensed source in tools/vendor.\n'
     + '#define PORT0R_SDL_SLOTCOUNT ' + str(len(slots)) + '\n'
@@ -99,7 +101,7 @@ p.write_text(s)
 # conversion/playback stays in Apple's AudioToolbox.
 converter = root / 'tools/convert_app.py'
 converter.write_text(converter.read_text().replace('"-framework", "GameController"]',
-    '"-framework", "GameController", "-framework", "AVFAudio"]'))
+    '"-framework", "GameController", "-framework", "AVFAudio", "-framework", "CoreHaptics"]'))
 # Native GCController is available on iOS. Avoid the unavailable Mac HID backend.
 target = root / 'shim/overrides/AppKit_Port0r.m'
 target.write_text('''#import <UIKit/UIKit.h>
