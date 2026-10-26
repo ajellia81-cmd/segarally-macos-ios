@@ -34,17 +34,17 @@ static NSMutableDictionary<NSValue *, NSNumber *> *queueIntent;
 static NSRecursiveLock *queueLock;
 static BOOL outputActive = YES;
 static NSMutableDictionary<NSValue *, NSValue *> *queueFormats;
-static float audioGain = 2.0f;
+static const float audioGain = 2.0f;
 static float LimitSample(float sample) {
     if (!isfinite(sample)) return 0;
     float scaled = sample * audioGain;
     float magnitude = fabsf(scaled);
-    // Unity gain remains bit-exact; amplified peaks approach full scale smoothly.
+    // Fixed 2x gain; amplified peaks approach full scale smoothly.
     if (magnitude > 0.85f) scaled = copysignf(0.85f + 0.15f * tanhf((magnitude - 0.85f) / 0.15f), scaled);
     return scaled;
 }
 static void BoostPCM(AudioQueueBufferRef buffer, AudioStreamBasicDescription format) {
-    if (!buffer || !buffer->mAudioData || audioGain == 1 ||
+    if (!buffer || !buffer->mAudioData ||
         buffer->mAudioDataByteSize > buffer->mAudioDataBytesCapacity ||
         format.mFormatID != kAudioFormatLinearPCM ||
         !(format.mFormatFlags & kAudioFormatFlagIsPacked) ||
@@ -99,14 +99,6 @@ __attribute__((visibility("default")))
 OSStatus AudioQueueNewOutput(const AudioStreamBasicDescription *format, AudioQueueOutputCallback callback,
     void *context, CFRunLoopRef runloop, CFStringRef mode, UInt32 flags, AudioQueueRef *queue) {
     EnsureQueueState();
-    NSString *gainPath = [NSHomeDirectory() stringByAppendingPathComponent:@"Documents/Port0r/audio-gain.txt"];
-    NSString *gainText = [NSString stringWithContentsOfFile:gainPath encoding:NSUTF8StringEncoding error:nil];
-    if (!gainText) {
-        [NSFileManager.defaultManager createDirectoryAtPath:gainPath.stringByDeletingLastPathComponent withIntermediateDirectories:YES attributes:nil error:nil];
-        [@"2.0\n" writeToFile:gainPath atomically:YES encoding:NSUTF8StringEncoding error:nil];
-    }
-    float requested = gainText ? gainText.floatValue : 2.0f;
-    audioGain = isfinite(requested) && requested >= 1 && requested <= 4 ? requested : 2;
     ActivateOutput();
     OSStatus (*real)(const AudioStreamBasicDescription *, AudioQueueOutputCallback, void *, CFRunLoopRef, CFStringRef, UInt32, AudioQueueRef *) = AudioFunction("AudioQueueNewOutput");
     OSStatus status = real ? real(format, callback, context, runloop, mode, flags, queue) : kAudio_ParamError;
@@ -114,7 +106,7 @@ OSStatus AudioQueueNewOutput(const AudioStreamBasicDescription *format, AudioQue
         [queueLock lock];
         queueFormats[[NSValue valueWithPointer:*queue]] = [NSValue valueWithBytes:format objCType:@encode(AudioStreamBasicDescription)];
         [queueLock unlock];
-        NSLog(@"PORT0R audio gain=%.2fx (audio-gain.txt range 1..4), format=%u bits=%u flags=%u",
+        NSLog(@"PORT0R fixed audio gain=%.2fx, format=%u bits=%u flags=%u",
               audioGain, (unsigned)format->mFormatID, (unsigned)format->mBitsPerChannel, (unsigned)format->mFormatFlags);
     }
     NSLog(@"PORT0R AudioQueueNewOutput status=%d rate=%.0f channels=%u", (int)status,

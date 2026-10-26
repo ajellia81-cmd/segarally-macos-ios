@@ -120,7 +120,24 @@ static int SetIntensity(id motor, SEL cmd, float intensity) {
             if (!RestartMotor(motor, NO)) return -1;
         }
         if (!hapticsForeground) intensity = 0;
-        return ((int (*)(id,SEL,float))originalIntensity)(motor, cmd, intensity);
+        BOOL wasActive = [motor respondsToSelector:NSSelectorFromString(@"active")] &&
+            ((bool (*)(id,SEL))objc_msgSend)(motor, NSSelectorFromString(@"active"));
+        int status = ((int (*)(id,SEL,float))originalIntensity)(motor, cmd, intensity);
+        if (!warmingMotors && hapticsForeground && intensity > 0 && !wasActive && status == 0) {
+            // SDL updates parameters before starting a retained silent player.
+            // Reapply the real intensity AFTER start so its first event cannot
+            // inherit the warm-up's zero intensity. Do not start a second event.
+            id<CHHapticPatternPlayer> player = MotorGet(motor, @"player");
+            CHHapticDynamicParameter *value = [[CHHapticDynamicParameter alloc]
+                initWithParameterID:CHHapticDynamicParameterIDHapticIntensityControl value:intensity relativeTime:0];
+            NSError *error = nil;
+            if (player && ![player sendParameters:@[value] atTime:0 error:&error]) {
+                NSLog(@"PORT0R first haptic intensity restore failed: %@", error);
+                InvalidateMotor(motor, MotorGet(motor, @"engine"));
+                return -1;
+            }
+        }
+        return status;
     }
 }
 __attribute__((visibility("default")))

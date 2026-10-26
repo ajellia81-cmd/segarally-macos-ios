@@ -13,6 +13,7 @@ test.write_text(r'''
 #import <CoreHaptics/CoreHaptics.h>
 #import <GameController/GameController.h>
 #include <assert.h>
+#include <math.h>
 static int playerCreations, starts, stops, originalCalls;
 static float lastIntensity;
 @interface TestPlayer : NSObject <CHHapticPatternPlayer> { float _intensity; }
@@ -51,6 +52,7 @@ static int engineStarts;
     id<CHHapticPatternPlayer> _testPlayer;
 }
 @property(nonatomic, strong) TestEngine *engine;
+@property bool active;
 @property(nonatomic, strong) id<CHHapticPatternPlayer> player;
 - (int)setIntensity:(float)intensity;
 - (void)cleanup;
@@ -68,6 +70,18 @@ static int Rumble(void *controller, uint16_t low, uint16_t high, uint32_t durati
 }
 static int Supported(void *controller) { return 1; }
 static int Unsupported(void *controller) { return 0; }
+static int realStarts;
+static int SimulatedFirstStart(id object, SEL cmd, float intensity) {
+    SDL_RumbleMotor *m = object;
+    TestPlayer *p = (TestPlayer *)m.player;
+    p.testIntensity = intensity;
+    if (intensity > 0 && !m.active) {
+        // Model a freshly started retained player resetting pre-start controls.
+        p.testIntensity = 0;
+        m.active = true; realStarts++;
+    } else if (intensity == 0) m.active = false;
+    return 0;
+}
 int main(void) { @autoreleasepool {
     assert(originalIntensity != NULL);
     motor = [SDL_RumbleMotor new]; motor.engine = [TestEngine new];
@@ -100,6 +114,17 @@ int main(void) { @autoreleasepool {
     sameEngine.stoppedHandler(CHHapticEngineStoppedReasonApplicationSuspended);
     sameEngine.resetHandler();
     assert(motor.engine == nil && motor.player == nil && liveMotors.count == 0);
+    motor = [SDL_RumbleMotor new]; motor.engine = [TestEngine new];
+    assert(PrepareSilentPlayer(motor));
+    originalIntensity = (IMP)SimulatedFirstStart;
+    assert([motor setIntensity:0.6f] == 0);
+    assert(fabsf(((TestPlayer *)motor.player).testIntensity - 0.6f) < 0.00001f && realStarts == 1);
+    assert([motor setIntensity:0.8f] == 0);
+    assert(fabsf(((TestPlayer *)motor.player).testIntensity - 0.8f) < 0.00001f && realStarts == 1);
+    assert([motor setIntensity:0] == 0);
+    assert([motor setIntensity:0.4f] == 0);
+    assert(fabsf(((TestPlayer *)motor.player).testIntensity - 0.4f) < 0.00001f && realStarts == 2);
+    puts("PASS: first actual haptic request restores requested intensity after start, with no extra event; later bursts preserved");
     puts("PASS: stopped/reset engines retained, foreground engine/player recovery and normal vibration restored");
     puts("PASS: actual SDL motor warm-up creates and retains a silent player, reuses it and preserves real intensity; unsupported motors skipped");
 } return 0; }
