@@ -68,3 +68,14 @@ what the original Port0r Mac build does in this scene.
 References:
 - https://github.com/mamedev/mame/blob/mame0289/src/mame/sega/model2_v.cpp
 - https://github.com/mamedev/mame/blob/mame0289/src/mame/sega/model2.cpp
+
+## Packaging while macOS runners are queued
+
+The comparison can also be produced on Linux from the exact validated IPA of
+run 40317867463 (SHA-256 pinned in `repack_texture_comparison.py`). It changes
+only the same two ARM64 default-value instructions and the two corresponding
+ad-hoc CodeDirectory page hashes. All other payload files are byte-identical.
+The script rejects identity-signed CMS signatures and verifies every code-page
+hash before and after packaging, resource preservation and ZIP integrity.
+This is a binary comparison package based on an already validated SDK build,
+not a claim that a fresh full Xcode build ran on Linux. LiveContainer re-signs it.

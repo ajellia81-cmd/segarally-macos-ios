@@ -1,0 +1,35 @@
+name: Texture synchronization comparison IPA
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/texture-sync-comparison.yml'
+      - 'tools/repack_texture_comparison.py'
+permissions:
+  contents: read
+  actions: read
+jobs:
+  compare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download exact previously validated IPA
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh run download 40317867463 --repo ajellia81-cmd/segarally-macos-ios --name SegaRally-LiveContainer-UNSIGNED --dir base
+      - name: Apply only native texture-fence defaults and verify package
+        run: python3 tools/repack_texture_comparison.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SegaRally-texture-sync-comparison-UNSIGNED
+          path: build/SegaRally-LiveContainer-texture-sync-UNSIGNED.ipa
+          if-no-files-found: error
+          retention-days: 14
+      - uses: actions/upload-artifact@v4
+        with:
+          name: texture-comparison-validation
+          path: build/texture-comparison-validation.json
+          if-no-files-found: error
+          retention-days: 7
