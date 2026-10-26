@@ -110,8 +110,9 @@ static BOOL PrepareSilentPlayer(id motor) {
         [player cancelAndReturnError:nil];
         NSLog(@"PORT0R silent haptic prepare failed: %@", error); return NO;
     }
-    [player cancelAndReturnError:NULL];
+    // Create the output before disposing the warm player, retaining prepared pattern resources across the handoff.
     id<CHHapticPatternPlayer> output = [engine createPlayerWithPattern:pattern error:&error];
+    [player cancelAndReturnError:NULL];
     if (!output || error) { NSLog(@"PORT0R R5 fresh haptic player failed: %@", error); return NO; }
     ((void (*)(id,SEL,id))objc_msgSend)(motor, setPlayer, output);
     NSLog(@"PORT0R R5 haptic prepared fresh output=%@ after disposable silent warm-up", output);
