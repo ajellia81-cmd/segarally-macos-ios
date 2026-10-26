@@ -20,6 +20,26 @@ unexpected = [str(p.relative_to(src)) for p in src.rglob('*')
 if unexpected:
     raise SystemExit(f'Unreviewed release contents: {unexpected}')
 
+# The generic converter pretends every iPhone GPU supports the desktop Mac2
+# family. Port0r uses MoltenVK, which consumes that answer when selecting Vulkan
+# capabilities. Report the native device's answer instead; retain all other
+# compatibility hooks and the original renderer for a controlled comparison.
+p = root / 'shim/overrides/AppKit_RuntimeHooks.m'
+s = p.read_text()
+old = '    if (family == MTLGPUFamilyMac2) return YES;'
+if s.count(old) != 1:
+    raise SystemExit('Pinned converter GPU-family hook changed; review required')
+s = s.replace(old, '    // Port0r: never invent desktop GPU capabilities on iOS.')
+s = s.replace('// Mac games pick shader sets by Mac GPU family; on iPadOS an Apple-silicon GPU reports only\n'
+              '// Apple/Common/Metal families. Same hardware, so also claim MTLGPUFamilyMac2.',
+              '// Port0r/MoltenVK must receive the actual GPU family capabilities.')
+marker = '    gSupportsFamily = method_setImplementation(class_getInstanceMethod(dc, @selector(supportsFamily:)), (IMP)ShimSupportsFamily);'
+if s.count(marker) != 1:
+    raise SystemExit('Pinned converter GPU hook installation changed')
+s = s.replace(marker, marker + '\n    NSLog(@"PORT0R native Metal capabilities Mac2=%d Apple9=%d; desktop family spoof disabled",'
+              '\n          [device supportsFamily:MTLGPUFamilyMac2], [device supportsFamily:MTLGPUFamilyApple9]);')
+p.write_text(s)
+
 # The Mac menu expresses resolution as percentages. Preserve those code paths;
 # make their base size and backing scale match the actual iPhone/iPad screen.
 p = root / 'shim/overrides/CoreGraphics.m'
