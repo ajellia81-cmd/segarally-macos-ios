@@ -1,7 +1,7 @@
-# R4: restore working vibration baseline
+# R5: isolate first cold-start haptic output from warm-up
 
-The user confirmed R3 Select and audio work, but reported all physical vibration disappeared. R4 restores AppKit_Haptics.m exactly to the R2 implementation at d915acf044ee21e5898d1ec56f6a12beb48ce1ce. This removes the foreground continuously running silent player, interception of zero-intensity stop requests, and changes to auto-shutdown. Previous stopped-player warm-up and background recovery are restored.
+The user confirmed R4 restores normal vibration and that the omission occurs only once after a fresh application launch. R5 changes only the prepared player's ownership: the actual SDL motor engine and pattern are warmed with a disposable zero-intensity player, which is stopped/cancelled; a separate fresh output player is created on that same engine before gameplay. The real output player has never started/stopped or received a zero-intensity dynamic parameter before its first request.
 
-The verified working Select-to-keyboard-Coin route and fixed 4x audio gain from R3 are unchanged. Only the haptic portion of the native smoke test is restored; current Select routing/configuration tests remain enabled. R4 build identifier is 1026.4.
+R4 stop behavior, foreground/background recovery, Select-Coin keyboard routing and fixed 4x audio gain are preserved. The rejected continuously running silent-player design is not used. CI checks that a fresh output has no warm-up parameter/start history, and retains first-request intensity and recovery tests. This tests implementation/state, not physical vibration. Device confirmation remains required; no root cause or physical fix is claimed.
 
-This is regression recovery, not a claim to solve the original first-vibration omission. Before R3 the user reported the first vibration missing and later vibrations working. R4 requires device confirmation of restored vibration; the original first-event issue remains unresolved. No ROM or protected game assets are included.
+No ROM, protected game asset, raw PCM or device launch log is published.

@@ -18,17 +18,20 @@ static int playerCreations, starts, stops, originalCalls;
 static float lastIntensity;
 @interface TestPlayer : NSObject <CHHapticPatternPlayer> { float _intensity; }
 @property float testIntensity;
+@property int parameterUpdates;
+@property int startCalls;
+@property BOOL cancelled;
 @end
 @implementation TestPlayer
 @synthesize testIntensity = _intensity;
 - (BOOL)sendParameters:(NSArray<CHHapticDynamicParameter *> *)parameters atTime:(NSTimeInterval)time error:(NSError **)error {
-    self.testIntensity = parameters.firstObject.value; return YES;
+    self.parameterUpdates++; self.testIntensity = parameters.firstObject.value; return YES;
 }
 - (BOOL)startAtTime:(NSTimeInterval)time error:(NSError **)error {
-    assert(self.testIntensity == 0); starts++; return YES;
+    assert(self.testIntensity == 0); self.startCalls++; starts++; return YES;
 }
 - (BOOL)stopAtTime:(NSTimeInterval)time error:(NSError **)error { stops++; return YES; }
-- (BOOL)cancelAndReturnError:(NSError **)error { return YES; }
+- (BOOL)cancelAndReturnError:(NSError **)error { self.cancelled = YES; return YES; }
 - (BOOL)scheduleParameterCurve:(CHHapticParameterCurve *)curve atTime:(NSTimeInterval)time error:(NSError **)error { return YES; }
 @end
 static int engineStarts;
@@ -86,10 +89,12 @@ int main(void) { @autoreleasepool {
     assert(originalIntensity != NULL);
     motor = [SDL_RumbleMotor new]; motor.engine = [TestEngine new];
     Port0rWarmControllerHaptics((void *)0x1234, Rumble, Rumble, Supported, Supported);
-    assert(playerCreations == 1 && starts == 1 && stops == 1);
+    assert(playerCreations == 2 && starts == 1 && stops == 1);
+    TestPlayer *fresh = (TestPlayer *)motor.player;
+    assert(fresh.parameterUpdates == 0 && fresh.startCalls == 0 && !fresh.cancelled);
     assert(originalCalls == 4 && lastIntensity == 0 && motor.player != nil);
     Port0rWarmControllerHaptics((void *)0x1234, Rumble, Rumble, Supported, Supported);
-    assert(playerCreations == 1 && starts == 1); // same player reused
+    assert(playerCreations == 2 && starts == 1); // existing fresh output reused; no extra preparation
     [motor setIntensity:0.75f];
     assert(lastIntensity == 0.75f && !warmingMotors); // real vibration preserved
     int calls = originalCalls;
@@ -103,12 +108,13 @@ int main(void) { @autoreleasepool {
     [motor setIntensity:0.5f]; assert(lastIntensity == 0 && engineStarts == 0);
     ResumeMotors();
     assert(engineStarts == 1 && motor.engine == sameEngine && motor.player != nil);
-    assert(playerCreations == 2 && starts == 2 && stops == 2);
+    assert(playerCreations == 4 && starts == 2 && stops == 2);
+    assert(((TestPlayer *)motor.player).parameterUpdates == 0 && ((TestPlayer *)motor.player).startCalls == 0);
     [motor setIntensity:0.5f]; assert(lastIntensity == 0.5f);
     motor.engine.resetHandler();
     assert(motor.player == nil);
     [motor setIntensity:0.25f];
-    assert(engineStarts == 2 && playerCreations == 3 && lastIntensity == 0.25f);
+    assert(engineStarts == 2 && playerCreations == 6 && lastIntensity == 0.25f);
     [motor cleanup];
     assert(motor.engine == nil && motor.player == nil && liveMotors.count == 0);
     sameEngine.stoppedHandler(CHHapticEngineStoppedReasonApplicationSuspended);
@@ -126,7 +132,7 @@ int main(void) { @autoreleasepool {
     assert(fabsf(((TestPlayer *)motor.player).testIntensity - 0.4f) < 0.00001f && realStarts == 2);
     puts("PASS: first actual haptic request restores requested intensity after start, with no extra event; later bursts preserved");
     puts("PASS: stopped/reset engines retained, foreground engine/player recovery and normal vibration restored");
-    puts("PASS: actual SDL motor warm-up creates and retains a silent player, reuses it and preserves real intensity; unsupported motors skipped");
+    puts("PASS: actual SDL motor warm-up is disposable; real output player has never started or received zero intensity; first request and recovery intensity preserved");
 } return 0; }
 ''')
 subprocess.run(['xcrun', '--sdk', 'macosx', 'clang', '-fobjc-arc', '-fsanitize=address',

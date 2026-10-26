@@ -102,21 +102,26 @@ static BOOL PrepareSilentPlayer(id motor) {
     if (!player || error) { NSLog(@"PORT0R haptic prepare failed: %@", error); return NO; }
     CHHapticDynamicParameter *silent = [[CHHapticDynamicParameter alloc]
         initWithParameterID:CHHapticDynamicParameterIDHapticIntensityControl value:0 relativeTime:0];
-    // Set intensity to zero before starting, then retain the stopped player for
-    // SDL. Its next real request sets its own requested intensity before start.
+    // Warm the actual engine and pattern, but never reuse the zero-intensity
+    // started/stopped player for real output. Prepare a fresh player now, before
+    // gameplay, so the first real request does not create a player or inherit silence.
     if (![player sendParameters:@[silent] atTime:0 error:&error] ||
         ![player startAtTime:0 error:&error] || ![player stopAtTime:0 error:&error]) {
         [player cancelAndReturnError:nil];
         NSLog(@"PORT0R silent haptic prepare failed: %@", error); return NO;
     }
-    ((void (*)(id,SEL,id))objc_msgSend)(motor, setPlayer, player);
+    [player cancelAndReturnError:NULL];
+    id<CHHapticPatternPlayer> output = [engine createPlayerWithPattern:pattern error:&error];
+    if (!output || error) { NSLog(@"PORT0R R5 fresh haptic player failed: %@", error); return NO; }
+    ((void (*)(id,SEL,id))objc_msgSend)(motor, setPlayer, output);
+    NSLog(@"PORT0R R5 haptic prepared fresh output=%@ after disposable silent warm-up", output);
     return YES;
 }
 static int SetIntensity(id motor, SEL cmd, float intensity) {
     @synchronized (motor) {
         if (!warmingMotors && intensity > 0) {
             uint64_t event = atomic_fetch_add(&hapticRequestsR2, 1);
-            if (event < 4) NSLog(@"PORT0R R2 haptic request=%llu intensity=%.4f foreground=%d engine=%@ player=%@",
+            if (event < 4) NSLog(@"PORT0R R5 haptic request=%llu intensity=%.4f foreground=%d engine=%@ player=%@",
                 (unsigned long long)event + 1, intensity, hapticsForeground, MotorGet(motor, @"engine"), MotorGet(motor, @"player"));
         }
         if (warmingMotors) {
