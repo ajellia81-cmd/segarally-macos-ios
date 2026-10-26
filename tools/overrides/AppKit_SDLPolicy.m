@@ -93,21 +93,17 @@ static uint8_t ControllerButton(void *controller, int button) {
     } else Port0rReleaseSelectCoinR3();
     return native || bridge ? 1 : 0;
 }
-#ifndef PORT0R_POLICY_TEST
-extern void Port0rWarmControllerHaptics(void *controller,
-    int (*rumble)(void *, uint16_t, uint16_t, uint32_t),
-    int (*triggers)(void *, uint16_t, uint16_t, uint32_t),
-    int (*hasRumble)(void *), int (*hasTriggers)(void *));
-static void *(*openController)(int);
-static int (*controllerRumble)(void *, uint16_t, uint16_t, uint32_t);
-static int (*triggerRumble)(void *, uint16_t, uint16_t, uint32_t);
-static int (*hasRumble)(void *), (*hasTriggers)(void *);
-static void *OpenController(int index) {
-    void *controller = openController(index);
-    if (controller) Port0rWarmControllerHaptics(controller, controllerRumble, triggerRumble, hasRumble, hasTriggers);
-    return controller;
+static int (*nativeRumble)(void *, uint16_t, uint16_t, uint32_t);
+static _Atomic uint64_t realRumbleCalls;
+static int RealRumble(void *controller, uint16_t low, uint16_t high, uint32_t duration) {
+    uint64_t call = atomic_fetch_add(&realRumbleCalls, 1) + 1;
+    CFAbsoluteTime start = CFAbsoluteTimeGetCurrent();
+    int result = nativeRumble(controller, low, high, duration);
+    if (call <= 8) NSLog(@"PORT0R R6 SDL real rumble=%llu low=%u high=%u duration=%ums status=%d nativeTime=%.2fms",
+        (unsigned long long)call, low, high, duration, result, (CFAbsoluteTimeGetCurrent() - start) * 1000);
+    return result;
 }
-#endif
+
 static int ApplyPolicy(void *raw, uint32_t bytes) {
     if (!raw || bytes != PORT0R_SDL_SLOTCOUNT * sizeof(void *)) return -1;
     void **table = raw;
@@ -115,14 +111,10 @@ static int ApplyPolicy(void *raw, uint32_t bytes) {
     if (!table[PORT0R_SLOT_SDL_GetVersion]) return -1;
     ((void (*)(PolicyVersion *))table[PORT0R_SLOT_SDL_GetVersion])(&version);
     if (version.major != 2 || version.minor != 30 || version.patch != 3) return -1;
-#ifndef PORT0R_POLICY_TEST
-    openController = table[PORT0R_SLOT_SDL_GameControllerOpen];
-    controllerRumble = table[PORT0R_SLOT_SDL_GameControllerRumble];
-    triggerRumble = table[PORT0R_SLOT_SDL_GameControllerRumbleTriggers];
-    hasRumble = table[PORT0R_SLOT_SDL_GameControllerHasRumble];
-    hasTriggers = table[PORT0R_SLOT_SDL_GameControllerHasRumbleTriggers];
-    if (openController) table[PORT0R_SLOT_SDL_GameControllerOpen] = (void *)OpenController;
-#endif
+    nativeRumble = table[PORT0R_SLOT_SDL_GameControllerRumble];
+    if (!nativeRumble) return -1;
+    table[PORT0R_SLOT_SDL_GameControllerRumble] = (void *)RealRumble;
+
     numJoysticks = table[PORT0R_SLOT_SDL_NumJoysticks];
     getControllerButton = table[PORT0R_SLOT_SDL_GameControllerGetButton];
     controllerName = table[PORT0R_SLOT_SDL_GameControllerName];

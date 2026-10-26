@@ -1,7 +1,9 @@
-# R5: isolate first cold-start haptic output from warm-up
+# R6: warm-up-off comparison for first-vibration omission
 
-The user confirmed R4 restores normal vibration and that the omission occurs only once after a fresh application launch. R5 changes only the prepared player's ownership: the actual SDL motor engine and pattern are warmed with a disposable zero-intensity player, which is stopped/cancelled; a separate fresh output player is created on that same engine before gameplay. The real output player has never started/stopped or received a zero-intensity dynamic parameter before its first request.
+The user recalls the omission starting with the first-stutter optimization. Commit dce8573ac14f71a5ae968c622ac72b26a08ac8a7 (parent e0356211996e21d1930db5be485f7a069b63b1a9) introduced SDL controller-open rumble priming and suppression of its nonzero intensity. R4/R5 retained that mechanism; neither removed the omission on device.
 
-R4 stop behavior, foreground/background recovery, Select-Coin keyboard routing and fixed 4x audio gain are preserved. The rejected continuously running silent-player design is not used. CI checks that a fresh output has no warm-up parameter/start history, and retains first-request intensity and recovery tests. This tests implementation/state, not physical vibration. Device confirmation remains required; no root cause or physical fix is claimed.
+R6 removes synthetic rumble, silent-player preparation, controller-open priming, and the post-start intensity rewrite. Cold foreground requests go to the original SDL motor with their original intensity. Stop requests keep original SDL behavior. The background suppression and engine-retention/restart fixes remain; recovery restarts only the engine and leaves player creation to original SDL on an actual nonzero request.
 
-No ROM, protected game asset, raw PCM or device launch log is published.
+A pass-through SDL rumble wrapper records the first eight real calls' requested strengths, duration, native result and execution time without changing arguments or making extra calls. Tests assert no startup calls/player creation and exact forwarding of the first real request, stop requests and native errors. Select-Coin routing and fixed 4x PCM gain are preserved.
+
+This is a comparison build, not a confirmed fix. The old first-vibration stutter may return. Device testing must separately record whether the first vibration is present and whether it stalls. No device log, ROM, protected game data or raw PCM is published.

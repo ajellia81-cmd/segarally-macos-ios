@@ -1,11 +1,9 @@
-"""Exercise actual haptic warm-up with fake motors, and foreground recovery.
+"""R6: verify real requests are not primed, suppressed or rewritten.
 
-Uses native Apple SDK types but never starts a real haptic engine or controller.
-Physical controller latency, gestures and delivery still require device tests.
+Mock the original SDL motor, without starting physical CoreHaptics hardware.
 """
 from pathlib import Path
 import subprocess
-
 overrides = Path('compatibility/shim/overrides').resolve()
 test = Path('build/controller_extras_smoke.m')
 test.write_text(r'''
@@ -14,131 +12,90 @@ test.write_text(r'''
 #import <GameController/GameController.h>
 #include <assert.h>
 #include <math.h>
-static int playerCreations, starts, stops, originalCalls;
-static float lastIntensity;
-@interface TestPlayer : NSObject <CHHapticPatternPlayer> { float _intensity; }
-@property float testIntensity;
-@property int parameterUpdates;
-@property int startCalls;
-@property BOOL cancelled;
+static int originalCalls, playerCreations, starts, stops, engineStarts;
+static int nativeStatus;
+static float lastIntensity, firstStartedIntensity = -1;
+@interface TestPlayer : NSObject
+@property float intensity;
 @end
 @implementation TestPlayer
-@synthesize testIntensity = _intensity;
-- (BOOL)sendParameters:(NSArray<CHHapticDynamicParameter *> *)parameters atTime:(NSTimeInterval)time error:(NSError **)error {
-    self.parameterUpdates++; self.testIntensity = parameters.firstObject.value; return YES;
-}
-- (BOOL)startAtTime:(NSTimeInterval)time error:(NSError **)error {
-    assert(self.testIntensity == 0); self.startCalls++; starts++; return YES;
-}
-- (BOOL)stopAtTime:(NSTimeInterval)time error:(NSError **)error { stops++; return YES; }
-- (BOOL)cancelAndReturnError:(NSError **)error { self.cancelled = YES; return YES; }
-- (BOOL)scheduleParameterCurve:(CHHapticParameterCurve *)curve atTime:(NSTimeInterval)time error:(NSError **)error { return YES; }
 @end
-static int engineStarts;
-@interface TestEngine : NSObject {
-    void (^_stopped)(CHHapticEngineStoppedReason);
-    void (^_reset)(void);
-}
+@interface TestEngine : NSObject
 @property(nonatomic,copy) void (^stoppedHandler)(CHHapticEngineStoppedReason);
 @property(nonatomic,copy) void (^resetHandler)(void);
 @end
 @implementation TestEngine
-@synthesize stoppedHandler = _stopped;
-@synthesize resetHandler = _reset;
 - (BOOL)startAndReturnError:(NSError **)error { engineStarts++; return YES; }
-- (id<CHHapticPatternPlayer>)createPlayerWithPattern:(CHHapticPattern *)pattern error:(NSError **)error {
-    assert(pattern != nil); playerCreations++; return [TestPlayer new];
-}
 @end
-@interface SDL_RumbleMotor : NSObject {
-    TestEngine *_testEngine;
-    id<CHHapticPatternPlayer> _testPlayer;
-}
-@property(nonatomic, strong) TestEngine *engine;
+@interface SDL_RumbleMotor : NSObject
+@property(nonatomic,strong) TestEngine *engine;
+@property(nonatomic,strong) TestPlayer *player;
 @property bool active;
-@property(nonatomic, strong) id<CHHapticPatternPlayer> player;
-- (int)setIntensity:(float)intensity;
+- (int)setIntensity:(float)value;
 - (void)cleanup;
 @end
 @implementation SDL_RumbleMotor
-@synthesize engine = _testEngine;
-@synthesize player = _testPlayer;
-- (int)setIntensity:(float)intensity { originalCalls++; lastIntensity = intensity; return 0; }
+- (int)setIntensity:(float)value {
+    originalCalls++; lastIntensity = value;
+    if (nativeStatus) return nativeStatus;
+    if (value == 0) {
+        if (self.player && self.active) stops++;
+        self.active = false;
+        return 0;
+    }
+    // Model original SDL's lazy player creation on a real nonzero request.
+    if (!self.player) { self.player = [TestPlayer new]; playerCreations++; self.active = false; }
+    self.player.intensity = value;
+    if (!self.active) {
+        self.active = true;
+        if (starts++ == 0) firstStartedIntensity = value;
+    }
+    return 0;
+}
 - (void)cleanup { self.player = nil; self.engine = nil; }
 @end
 ''' + '#import "' + str(overrides / 'AppKit_Haptics.m') + '"\n' + r'''
-static SDL_RumbleMotor *motor;
-static int Rumble(void *controller, uint16_t low, uint16_t high, uint32_t duration) {
-    return [motor setIntensity:(float)low / 65535.0f];
-}
-static int Supported(void *controller) { return 1; }
-static int Unsupported(void *controller) { return 0; }
-static int realStarts;
-static int SimulatedFirstStart(id object, SEL cmd, float intensity) {
-    SDL_RumbleMotor *m = object;
-    TestPlayer *p = (TestPlayer *)m.player;
-    p.testIntensity = intensity;
-    if (intensity > 0 && !m.active) {
-        // Model a freshly started retained player resetting pre-start controls.
-        p.testIntensity = 0;
-        m.active = true; realStarts++;
-    } else if (intensity == 0) m.active = false;
-    return 0;
-}
 int main(void) { @autoreleasepool {
-    assert(originalIntensity != NULL);
-    motor = [SDL_RumbleMotor new]; motor.engine = [TestEngine new];
-    Port0rWarmControllerHaptics((void *)0x1234, Rumble, Rumble, Supported, Supported);
-    assert(playerCreations == 2 && starts == 1 && stops == 1);
-    TestPlayer *fresh = (TestPlayer *)motor.player;
-    assert(fresh.parameterUpdates == 0 && fresh.startCalls == 0 && !fresh.cancelled);
-    assert(originalCalls == 4 && lastIntensity == 0 && motor.player != nil);
-    Port0rWarmControllerHaptics((void *)0x1234, Rumble, Rumble, Supported, Supported);
-    assert(playerCreations == 2 && starts == 1); // existing fresh output reused; no extra preparation
-    [motor setIntensity:0.75f];
-    assert(lastIntensity == 0.75f && !warmingMotors); // real vibration preserved
-    int calls = originalCalls;
-    Port0rWarmControllerHaptics((void *)0x1234, Rumble, Rumble, Unsupported, Unsupported);
-    assert(originalCalls == calls);
+    assert(originalIntensity != NULL && originalCalls == 0 && playerCreations == 0);
+    SDL_RumbleMotor *motor = [SDL_RumbleMotor new]; motor.engine = [TestEngine new];
+    assert(motor.player == nil && engineStarts == 0 && starts == 0);
+    assert([motor setIntensity:0.75f] == 0);
+    assert(originalCalls == 1 && lastIntensity == 0.75f && firstStartedIntensity == 0.75f);
+    assert(playerCreations == 1 && starts == 1 && motor.player.intensity == 0.75f);
+    [motor setIntensity:0];
+    assert(originalCalls == 2 && !motor.active && stops == 1);
+    [motor setIntensity:0.5f];
+    assert(originalCalls == 3 && starts == 2 && motor.player.intensity == 0.5f);
+    TestEngine *same = motor.engine;
     hapticsForeground = NO;
-    TestEngine *sameEngine = motor.engine;
-    motor.engine.stoppedHandler(CHHapticEngineStoppedReasonApplicationSuspended);
-    assert(motor.engine == sameEngine && motor.player == nil);
-    assert([objc_getAssociatedObject(motor, &needsRestartKey) boolValue]);
-    [motor setIntensity:0.5f]; assert(lastIntensity == 0 && engineStarts == 0);
+    same.stoppedHandler(CHHapticEngineStoppedReasonApplicationSuspended);
+    assert(motor.engine == same && motor.player == nil);
+    [motor setIntensity:0.6f];
+    assert(lastIntensity == 0 && playerCreations == 1 && engineStarts == 0);
     ResumeMotors();
-    assert(engineStarts == 1 && motor.engine == sameEngine && motor.player != nil);
-    assert(playerCreations == 4 && starts == 2 && stops == 2);
-    assert(((TestPlayer *)motor.player).parameterUpdates == 0 && ((TestPlayer *)motor.player).startCalls == 0);
-    [motor setIntensity:0.5f]; assert(lastIntensity == 0.5f);
-    motor.engine.resetHandler();
+    assert(engineStarts == 1 && motor.player == nil && playerCreations == 1);
+    [motor setIntensity:0.6f];
+    assert(lastIntensity == 0.6f && playerCreations == 2 && starts == 3);
+    same.resetHandler();
     assert(motor.player == nil);
     [motor setIntensity:0.25f];
-    assert(engineStarts == 2 && playerCreations == 6 && lastIntensity == 0.25f);
+    assert(engineStarts == 2 && playerCreations == 3 && lastIntensity == 0.25f);
+    nativeStatus = -7;
+    assert([motor setIntensity:0.42f] == -7 && lastIntensity == 0.42f);
+    nativeStatus = 0;
     [motor cleanup];
     assert(motor.engine == nil && motor.player == nil && liveMotors.count == 0);
-    sameEngine.stoppedHandler(CHHapticEngineStoppedReasonApplicationSuspended);
-    sameEngine.resetHandler();
+    same.stoppedHandler(CHHapticEngineStoppedReasonApplicationSuspended);
+    same.resetHandler();
     assert(motor.engine == nil && motor.player == nil && liveMotors.count == 0);
-    motor = [SDL_RumbleMotor new]; motor.engine = [TestEngine new];
-    assert(PrepareSilentPlayer(motor));
-    originalIntensity = (IMP)SimulatedFirstStart;
-    assert([motor setIntensity:0.6f] == 0);
-    assert(fabsf(((TestPlayer *)motor.player).testIntensity - 0.6f) < 0.00001f && realStarts == 1);
-    assert([motor setIntensity:0.8f] == 0);
-    assert(fabsf(((TestPlayer *)motor.player).testIntensity - 0.8f) < 0.00001f && realStarts == 1);
-    assert([motor setIntensity:0] == 0);
-    assert([motor setIntensity:0.4f] == 0);
-    assert(fabsf(((TestPlayer *)motor.player).testIntensity - 0.4f) < 0.00001f && realStarts == 2);
-    puts("PASS: first actual haptic request restores requested intensity after start, with no extra event; later bursts preserved");
-    puts("PASS: stopped/reset engines retained, foreground engine/player recovery and normal vibration restored");
-    puts("PASS: actual SDL motor warm-up is disposable; real output player has never started or received zero intensity; first request and recovery intensity preserved");
+    puts("PASS: no synthetic startup request/player; first real intensity reaches original SDL unchanged, zero stops preserved and native errors forwarded");
+    puts("PASS: engine retained after suspension, foreground restart creates no player; real requests restore output and reset/cleanup remain safe");
 } return 0; }
 ''')
-subprocess.run(['xcrun', '--sdk', 'macosx', 'clang', '-fobjc-arc', '-fsanitize=address',
-                '-framework', 'Foundation', '-framework', 'CoreHaptics', '-framework', 'GameController',
-                str(test), '-o', 'build/controller_extras_smoke'], check=True)
-subprocess.run(['build/controller_extras_smoke'], check=True, timeout=20)
+subprocess.run(['xcrun','--sdk','macosx','clang','-fobjc-arc','-fsanitize=address',
+                '-framework','Foundation','-framework','CoreHaptics','-framework','GameController',
+                str(test),'-o','build/controller_extras_smoke'],check=True)
+subprocess.run(['build/controller_extras_smoke'],check=True,timeout=20)
 
 # Exercise the real polling bridge with controlled GameController snapshots.
 select_test = Path('build/backbone_select_smoke.m')

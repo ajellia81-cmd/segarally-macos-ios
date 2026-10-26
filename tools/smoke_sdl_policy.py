@@ -6,6 +6,14 @@ overrides = Path('compatibility/shim/overrides').resolve()
 test = Path('build/sdl_policy_smoke.m')
 test.write_text('#define PORT0R_POLICY_TEST 1\n#import "' + str(overrides / 'AppKit_SDLPolicy.m') + '"\n' + r'''
 #include <assert.h>
+static int testRumbleCalls;
+static void *testRumbleController;
+static uint16_t testLow, testHigh;
+static uint32_t testDuration;
+static int NativeRumblePassthrough(void *controller, uint16_t low, uint16_t high, uint32_t duration) {
+    testRumbleCalls++; testRumbleController = controller; testLow = low; testHigh = high; testDuration = duration;
+    return -7;
+}
 static BOOL allowCoinFallback;
 static int coinDowns, coinUps;
 BOOL Port0rSelectCoinFallbackR3(void) { return allowCoinFallback; }
@@ -36,6 +44,7 @@ int main(void) { @autoreleasepool {
     void *table[PORT0R_SDL_SLOTCOUNT];
     for (int i = 0; i < PORT0R_SDL_SLOTCOUNT; ++i) table[i] = (void *)Forbidden;
     table[PORT0R_SLOT_SDL_GetVersion] = (void *)Version;
+    table[PORT0R_SLOT_SDL_GameControllerRumble] = (void *)NativeRumblePassthrough;
     table[PORT0R_SLOT_SDL_CreateWindow] = (void *)NativeCreate;
     table[PORT0R_SLOT_SDL_GetWindowFlags] = (void *)NativeFlags;
     table[PORT0R_SLOT_SDL_PollEvent] = (void *)NativePoll;
@@ -46,6 +55,11 @@ int main(void) { @autoreleasepool {
     table[PORT0R_SLOT_SDL_GameControllerGetButton] = (void *)NativeButton;
     table[PORT0R_SLOT_SDL_GameControllerName] = (void *)NativeName;
     assert(ApplyPolicy(table, sizeof table) == 0);
+    assert(testRumbleCalls == 0 && table[PORT0R_SLOT_SDL_GameControllerOpen] == (void *)Forbidden);
+    int (*rumble)(void *,uint16_t,uint16_t,uint32_t) = table[PORT0R_SLOT_SDL_GameControllerRumble];
+    assert(rumble((void *)0x5678,123,456,20) == -7);
+    assert(testRumbleCalls == 1 && testRumbleController == (void *)0x5678 && testLow == 123 && testHigh == 456 && testDuration == 20);
+    puts("PASS: opening policy injects no rumble; real controller rumble arguments/duration/result forwarded exactly once");
     uint8_t (*readButton)(void *, int) = table[PORT0R_SLOT_SDL_GameControllerGetButton];
     assert(readButton((void *)1, 4) == 0);
     backPressed = YES;

@@ -98,13 +98,13 @@ static void UpdateFPS(void) {
     uint64_t (*haptic)(void) = Port0rHapticCallsR2;
     unsigned long long a = audio ? audio() : 0, b = input ? input() : 0, h = haptic ? haptic() : 0;
     static unsigned reports;
-    if (!(reports++ % 5)) NSLog(@"PORT0R R5 runtime A=%llu S=%llu H=%llu audioSymbol=%d inputSymbol=%d hapticSymbol=%d",
+    if (!(reports++ % 5)) NSLog(@"PORT0R R6 runtime A=%llu S=%llu H=%llu audioSymbol=%d inputSymbol=%d hapticSymbol=%d",
         a,b,h,audio != NULL,input != NULL,haptic != NULL);
     if (elapsed > 0 && fpsLabel) {
         // A rendered/presented frame can repeat the same emulated arcade frame.
         // The closed-source core's frame-counter ABI is not documented, so do
         // not call an unknown export or display a guessed constant 60 as a measurement.
-        fpsLabel.text = [NSString stringWithFormat:@"Present %.1f | Render %.1f\nGame FPS -- | Output %ux%u\nDisplay %.1f / Max %ld\nR5 | A %llu | S %llu | H %llu",
+        fpsLabel.text = [NSString stringWithFormat:@"Present %.1f | Render %.1f\nGame FPS -- | Output %ux%u\nDisplay %.1f / Max %ld\nR6 | A %llu | S %llu | H %llu",
                          frames / elapsed, requests / elapsed, (unsigned)(pixels >> 32), (unsigned)pixels,
                          ticks / elapsed, (long)UIScreen.mainScreen.maximumFramesPerSecond, a, b, h];
         [fpsLabel.superview bringSubviewToFront:fpsLabel];
