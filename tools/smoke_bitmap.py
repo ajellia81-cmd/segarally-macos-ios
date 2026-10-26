@@ -59,6 +59,8 @@ if result.returncode:
     print(result.stderr[-5000:])
     raise SystemExit(result.returncode)
 generated = Path('build/shims/Shim_AppKit.m').read_text()
-assert '@interface NSBitmapImageRep :' not in generated
-assert '@interface NSImage :' not in generated
+# The converter intentionally emits @interface declarations for handwritten
+# classes. Only a generated @implementation would replace the real methods.
+assert '@implementation NSBitmapImageRep' not in generated
+assert '@implementation NSImage\n' not in generated
 print('PASS: bitmap/image classes use the handwritten implementation')
