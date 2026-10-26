@@ -177,6 +177,7 @@ int main(void) { @autoreleasepool {
     assert(!Port0rBackboneSelect("Other pad", 2) && !Port0rBackboneSelect(NULL, 2));
     pad.vendorName = @"Generic Controller";
     assert(Port0rBackboneSelect("Generic Controller", 1));
+    assert(Port0rBackboneSelect("Backbone Pro", 1)); // SDL and GC can report different names
     assert(!Port0rBackboneSelect("Generic Controller", 2));
     pad.vendorName = @"Backbone";
     button.isPressed = NO; assert(!Port0rBackboneSelect("Backbone Pro", 2));

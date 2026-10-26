@@ -15,9 +15,10 @@ BOOL Port0rBackboneSelect(const char *name, int sdlDevices) {
     BOOL named = name && [[[NSString stringWithUTF8String:name] lowercaseString] containsString:@"backbone"];
     // Bluetooth names need not contain the manufacturer. A single GC device
     // and a single SDL device identify the same pad without guessing its name.
-    GCController *matched = !named && sdlDevices == 1 && controllers.count == 1 ? controllers.firstObject : nil;
-    if (!named && !matched) return NO;
-    for (GCController *controller in (named ? controllers : @[])) {
+    BOOL unique = sdlDevices == 1 && controllers.count == 1;
+    GCController *matched = unique ? controllers.firstObject : nil;
+    if (!named && !unique) return NO;
+    for (GCController *controller in (!unique && named ? controllers : @[])) {
         if (!IsBackbone(controller)) continue;
         // Without a stable shared device ID, never leak one pad's input into another.
         if (matched) return NO;
