@@ -196,10 +196,10 @@ int main(void) { @autoreleasepool {
     pad.vendorName = @"Backbone"; pad.productCategory = @"Pro";
     pad.extendedGamepad = profile; pad.physicalInputProfile = profile;
     assert(CoinOnlySelection(nil) && CoinOnlySelection(@"# empty defaults"));
-    assert(CoinOnlySelection(@"pad.coin=SELECT\\npad.menu=START"));
-    assert(CoinOnlySelection(@"pad.coin SELECT\\npad.menu START"));
+    assert(CoinOnlySelection(@"pad.coin=SELECT\npad.menu=START"));
+    assert(CoinOnlySelection(@"pad.coin SELECT\npad.menu START"));
     assert(!CoinOnlySelection(@"pad.coin=GUIDE"));
-    assert(!CoinOnlySelection(@"pad.coin=SELECT\\npad.start=SELECT"));
+    assert(!CoinOnlySelection(@"pad.coin=SELECT\npad.start=SELECT"));
     assert(!CoinOnlySelection(@"pad.coin"));
     testControllers = @[pad];
     assert(!Port0rBackboneSelect("Backbone Pro", 2));
