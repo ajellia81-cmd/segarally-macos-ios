@@ -1,4 +1,7 @@
+#import <Foundation/Foundation.h>
+#ifndef PORT0R_BACKBONE_TEST
 #import <UIKit/UIKit.h>
+#endif
 #import <GameController/GameController.h>
 
 // Never own pressedChangedHandler: SDL installs/replaces these during device open.
@@ -33,9 +36,11 @@ static void ConfigureBackbones(void) {
               controller.physicalInputProfile.buttons.allKeys);
     }
 }
+#ifndef PORT0R_BACKBONE_TEST
 __attribute__((constructor)) static void BackboneInit(void) {
     NSNotificationCenter *nc = NSNotificationCenter.defaultCenter;
     for (NSString *notification in @[GCControllerDidConnectNotification, UIApplicationDidBecomeActiveNotification])
         [nc addObserverForName:notification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n) { ConfigureBackbones(); }];
     dispatch_async(dispatch_get_main_queue(), ^{ ConfigureBackbones(); });
 }
+#endif

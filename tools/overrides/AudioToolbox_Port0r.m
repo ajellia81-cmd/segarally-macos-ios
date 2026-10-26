@@ -101,6 +101,10 @@ OSStatus AudioQueueNewOutput(const AudioStreamBasicDescription *format, AudioQue
     EnsureQueueState();
     NSString *gainPath = [NSHomeDirectory() stringByAppendingPathComponent:@"Documents/Port0r/audio-gain.txt"];
     NSString *gainText = [NSString stringWithContentsOfFile:gainPath encoding:NSUTF8StringEncoding error:nil];
+    if (!gainText) {
+        [NSFileManager.defaultManager createDirectoryAtPath:gainPath.stringByDeletingLastPathComponent withIntermediateDirectories:YES attributes:nil error:nil];
+        [@"2.0\n" writeToFile:gainPath atomically:YES encoding:NSUTF8StringEncoding error:nil];
+    }
     float requested = gainText ? gainText.floatValue : 2.0f;
     audioGain = isfinite(requested) && requested >= 1 && requested <= 4 ? requested : 2;
     ActivateOutput();

@@ -108,3 +108,57 @@ subprocess.run(['xcrun', '--sdk', 'macosx', 'clang', '-fobjc-arc', '-fsanitize=a
                 '-framework', 'Foundation', '-framework', 'CoreHaptics', '-framework', 'GameController',
                 str(test), '-o', 'build/controller_extras_smoke'], check=True)
 subprocess.run(['build/controller_extras_smoke'], check=True, timeout=20)
+
+# Exercise the real polling bridge with controlled GameController snapshots.
+select_test = Path('build/backbone_select_smoke.m')
+select_test.write_text('#define PORT0R_BACKBONE_TEST 1\n#import "' + str(overrides / 'AppKit_Backbone.m') + '"\n' + r'''
+#include <assert.h>
+static NSArray *testControllers;
+@interface SelectButton : NSObject
+@property BOOL isPressed;
+@property GCSystemGestureState preferredSystemGestureState;
+@end
+@implementation SelectButton
+@end
+@interface SelectProfile : NSObject
+@property(strong) id buttonOptions;
+@property(strong) NSDictionary *buttons;
+@end
+@implementation SelectProfile
+@end
+@interface SelectController : NSObject
+@property(copy) NSString *vendorName;
+@property(copy) NSString *productCategory;
+@property(strong) SelectProfile *extendedGamepad;
+@property(strong) SelectProfile *physicalInputProfile;
+@end
+@implementation SelectController
+@end
+static NSArray *Controllers(id self, SEL cmd) { return testControllers; }
+int main(void) { @autoreleasepool {
+    Method method = class_getClassMethod(GCController.class, @selector(controllers));
+    IMP original = method_setImplementation(method, (IMP)Controllers);
+    SelectButton *button = [SelectButton new];
+    SelectProfile *profile = [SelectProfile new]; profile.buttonOptions = button;
+    SelectController *pad = [SelectController new];
+    pad.vendorName = @"Backbone"; pad.productCategory = @"Pro";
+    pad.extendedGamepad = profile; pad.physicalInputProfile = profile;
+    testControllers = @[pad];
+    assert(!Port0rBackboneSelect("Backbone Pro"));
+    button.isPressed = YES;
+    assert(Port0rBackboneSelect("Backbone Pro"));
+    assert(button.preferredSystemGestureState == GCSystemGestureStateDisabled);
+    assert(!Port0rBackboneSelect("Other pad") && !Port0rBackboneSelect(NULL));
+    button.isPressed = NO; assert(!Port0rBackboneSelect("Backbone Pro"));
+    profile.buttonOptions = nil; profile.buttons = @{@"Button Share":button};
+    button.isPressed = YES; assert(Port0rBackboneSelect("Backbone Pro"));
+    testControllers = @[pad,pad]; assert(!Port0rBackboneSelect("Backbone Pro"));
+    testControllers = @[]; assert(!Port0rBackboneSelect("Backbone Pro"));
+    method_setImplementation(method, original);
+    puts("PASS: actual Backbone bridge polls press/release, handles Share fallback/disconnect and refuses ambiguous pads");
+} return 0; }
+''')
+subprocess.run(['xcrun', '--sdk', 'macosx', 'clang', '-fobjc-arc', '-fsanitize=address',
+                '-framework', 'Foundation', '-framework', 'GameController',
+                str(select_test), '-o', 'build/backbone_select_smoke'], check=True)
+subprocess.run(['build/backbone_select_smoke'], check=True, timeout=20)
