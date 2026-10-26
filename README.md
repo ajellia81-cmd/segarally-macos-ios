@@ -14,19 +14,26 @@ import the `.ipa` into LiveContainer. The IPA has ad-hoc signatures for binary
 integrity only, no Apple certificate or provisioning profile. LiveContainer
 must perform its normal signing/import process.
 
-**Installation and launch on an iPhone 18 Pro Max / iOS 27 have not been tested.**
-A successful Actions run establishes conversion and package checks only.
+**A user device test reached the original ROM setup screen on iPhone / iOS 27.**
+Actual ROM import, gameplay, audio, controller input and refresh rate still need
+device verification. Actions validates conversion and packaging only.
 
-After launch creates the directories, put your legally obtained game files in
-the guest app's **Documents/Port0r/srallyc/roms** directory through LiveContainer's
-container/file management. Keep the ZIP files compressed. The conversion no longer
-creates an additional Downloads folder or redirects the Mac Downloads path.
-An empty Documents/Downloads folder left by earlier builds is removed at startup;
-if it contains files, it is preserved to avoid deleting user data.
-The original engine expects `srallyc.zip` and `segabill.zip` for MAME 0.289.
+Put your legally obtained `srallyc.zip` and `segabill.zip` (MAME 0.289) in the
+guest app's **Documents/Downloads** directory, without extracting them, through
+LiveContainer's container/file management. Return to the game so its original
+Downloads scanner can find and import them. The original setup-screen wording
+is preserved.
+
+The Mac `~/Downloads` path is mapped to this guest folder. A home-directory
+Downloads symlink is created when absent so Foundation and native filesystem
+scanners see the same folder. Existing directories, ROMs and imported game data
+are preserved. Original imported data remains under
+**Documents/Port0r/srallyc**; users need not populate its internal roms folder
+manually. The old empty-Downloads cleanup has been removed.
+
 If the guest Documents directory is not visible in Files, open it through
 LiveContainer. File sharing keys alone do not guarantee guest visibility.
-ROM discovery on device remains unverified.
+Diagnostic output is saved to **Documents/Port0r-diagnostics/launch.log**.
 
 ## Display, input and sound
 
