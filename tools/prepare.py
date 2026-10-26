@@ -1,6 +1,8 @@
 """Apply narrowly scoped, reproducible adaptations to the pinned converter."""
 from pathlib import Path
 import shutil
+import re
+import subprocess
 
 root = Path('compatibility')
 src = Path('extracted/Port0r Rally.app/Contents')
@@ -44,6 +46,19 @@ s = s.replace('CGDisplayModeRetain(CGDisplayModeRef m) { return m; }',
 p.write_text(s)
 for override in (Path(__file__).parent / 'overrides').glob('*.m'):
     shutil.copyfile(override, root / 'shim/overrides' / override.name)
+# The bundled SDL is Mac SDL 2.30.3. Generate its Mac API-table slots rather
+# than using iOS slot numbering (the platform-specific entries differ).
+procs = Path(__file__).parent / 'vendor/SDL_dynapi_procs.h'
+expanded = subprocess.check_output(['xcrun', '--sdk', 'macosx', 'clang', '-E', '-P', '-x', 'c',
+    '-undef', '-D__MACOSX__', '-DSDL_DYNAPI_PROC(rc,fn,params,args,ret)=fn', str(procs)], text=True)
+slots = re.findall(r'^SDL_\w+$', expanded, re.M)
+assert len(slots) > 800 and len(slots) == len(set(slots))
+names = ['SDL_GetVersion', 'SDL_CreateWindow', 'SDL_GetWindowFlags', 'SDL_SetWindowFullscreen',
+         'SDL_SetWindowDisplayMode', 'SDL_SetWindowSize']
+(root / 'shim/overrides/Port0rSDLSlots.h').write_text(
+    '// Generated from Mac SDL 2.30.3 dynapi ABI, zlib-licensed source in tools/vendor.\n'
+    + '#define PORT0R_SDL_SLOTCOUNT ' + str(len(slots)) + '\n'
+    + ''.join('#define PORT0R_SLOT_' + n + ' ' + str(slots.index(n)) + '\n' for n in names))
 p = root / 'shim/overrides/AppKit.m'
 s = p.read_text().replace('return @"iPad";', 'return @"iPhone / iPad Native";')
 s = s.replace('CGRectMake(0, 0, 1376, 1032)',

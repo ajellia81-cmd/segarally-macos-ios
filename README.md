@@ -37,6 +37,32 @@ Diagnostic output is saved to **Documents/Port0r-diagnostics/launch.log**.
 
 ## Display, input and sound
 
+The user has confirmed ROM-based gameplay and a full-width iPhone picture.
+Audio and Backbone Pro Select support are being adapted to the iOS default
+audio route and controller system-gesture handling; their latest fixes still
+need device verification.
+
+Desktop fullscreen/window-resize requests are ignored on iOS, where the guest
+window already fills the screen. The original menu entry remains visible but
+cannot switch display modes. On launch only `flat.fullscreen` is reset to zero,
+with a one-time settings backup; other settings and ROM data are preserved.
+The original Mac SDL 2.30.3 API table is version/size checked before enabling
+this policy; all non-window APIs keep their original implementations.
+
+The top-left performance overlay updates once per second:
+
+- **Present**: completed Metal presentations per second, including repeated
+  arcade frames; this is the useful value for testing the 60/120 fps option.
+- **Render**: Metal drawable acquisitions per second; not an emulation counter.
+- **Game FPS --**: the internal MAME frame counter cannot currently be measured
+  safely through a documented ABI. A constant 60 is not shown as measured data.
+- **Output**: final drawable pixel dimensions, not the supersampled internal
+  3D render-target dimensions.
+
+Compare the same scene with the same settings except the option being tested.
+Real 120 Hz output, audible sound and Backbone button delivery require a device
+test; build-time tests do not establish those outcomes.
+
 - Original resolution choices remain in the unmodified engine: Auto, 50%, 75%,
   100%, 150% and 200%. Native size comes from `UIScreen.nativeBounds`, with the
   actual screen scale, including iPhones with a 3x scale. This adds adaptation
