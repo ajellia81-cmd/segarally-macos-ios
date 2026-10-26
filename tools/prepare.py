@@ -34,7 +34,60 @@ p.write_text(s)
 target = root / 'shim/overrides/AppKit_Port0r.m'
 target.write_text('''#import <UIKit/UIKit.h>
 #include <stdlib.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <sys/stat.h>
+#import <mach-o/dyld.h>
+
+static NSUncaughtExceptionHandler *previousExceptionHandler;
+static void Port0rException(NSException *exception) {
+    NSLog(@"PORT0R UNCAUGHT %@: %@\\n%@", exception.name, exception.reason,
+          [exception.callStackSymbols componentsJoinedByString:@"\\n"]);
+    fsync(STDERR_FILENO);
+    if (previousExceptionHandler) previousExceptionHandler(exception);
+}
+
+// Objective-C +load runs before the shim's C constructors. This records the
+// earliest reachable app startup, including shim preload failures and faults.
+@interface Port0rLaunchDiagnostics : NSObject @end
+@implementation Port0rLaunchDiagnostics
++ (void)load {
+    @autoreleasepool {
+        NSString *dir = [NSHomeDirectory() stringByAppendingPathComponent:@"Documents/Port0r-diagnostics"];
+        NSFileManager *fm = NSFileManager.defaultManager;
+        NSError *error = nil;
+        if (![fm createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:&error]) {
+            NSLog(@"PORT0R cannot create diagnostic directory: %@", error);
+            return;
+        }
+        NSString *path = [dir stringByAppendingPathComponent:@"launch.log"];
+        struct stat st;
+        if (stat(path.fileSystemRepresentation, &st) == 0 && st.st_size > 2 * 1024 * 1024) {
+            NSString *previous = [dir stringByAppendingPathComponent:@"launch.previous.log"];
+            [fm removeItemAtPath:previous error:nil];
+            [fm moveItemAtPath:path toPath:previous error:nil];
+        }
+        int fd = open(path.fileSystemRepresentation, O_WRONLY | O_CREAT | O_APPEND, 0600);
+        if (fd < 0) return;
+        dup2(fd, STDOUT_FILENO);
+        dup2(fd, STDERR_FILENO);
+        if (fd > STDERR_FILENO) close(fd);
+        setvbuf(stdout, NULL, _IONBF, 0);
+        setvbuf(stderr, NULL, _IONBF, 0);
+        NSLog(@"PORT0R DIAGNOSTIC START %@ home=%@ bundle=%@ thread=%@",
+              NSDate.date, NSHomeDirectory(), NSBundle.mainBundle.bundlePath, NSThread.currentThread);
+        for (uint32_t i = 0; i < _dyld_image_count(); ++i) {
+            fprintf(stderr, "IMAGE %p %s\\n", (void *)_dyld_get_image_header(i), _dyld_get_image_name(i));
+        }
+        previousExceptionHandler = NSGetUncaughtExceptionHandler();
+        NSSetUncaughtExceptionHandler(Port0rException);
+        fsync(STDERR_FILENO);
+    }
+}
+@end
+
 __attribute__((constructor)) static void Port0rContainerSetup(void) {
+    NSLog(@"PORT0R container setup constructor reached");
     setenv("SDL_JOYSTICK_IOKIT", "0", 1);
     setenv("SDL_JOYSTICK_HIDAPI", "0", 1);
     setenv("SDL_JOYSTICK_MFI", "1", 1);
@@ -45,4 +98,27 @@ __attribute__((constructor)) static void Port0rContainerSetup(void) {
     }
 }
 ''')
+# NSLog normally goes to the device's unified log, which Cloud cannot read.
+# Mirror shim diagnostics to stderr after redirecting it to the guest log file.
+header = root / 'shim/overrides/Port0rLog.h'
+header.write_text('''#pragma once
+#import <Foundation/Foundation.h>
+#include <stdio.h>
+#include <stdarg.h>
+#include <string.h>
+#include <unistd.h>
+static inline void Port0rDiagnosticLog(NSString *format, ...) NS_FORMAT_FUNCTION(1,2);
+static inline void Port0rDiagnosticLog(NSString *format, ...) {
+    va_list args;
+    va_start(args, format);
+    NSString *message = [[NSString alloc] initWithFormat:format arguments:args];
+    va_end(args);
+    NSLog(@"%@", message);
+    const char *text = message.UTF8String;
+    if (text) { write(STDERR_FILENO, text, strlen(text)); write(STDERR_FILENO, "\\n", 1); }
+}
+#define NSLog(...) Port0rDiagnosticLog(__VA_ARGS__)
+''')
+for source in (root / 'shim/overrides').glob('*.m'):
+    source.write_text('#import "Port0rLog.h"\n' + source.read_text())
 print('Prepared native display sizing, GameController backend and ROM-free input bundle')
