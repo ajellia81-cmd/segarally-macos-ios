@@ -26,6 +26,27 @@ void *AudioFunction(const char *name) {
     return NULL;
 }
 int main(void) { @autoreleasepool {
+    AudioStreamBasicDescription pcm = {0};
+    pcm.mFormatID = kAudioFormatLinearPCM;
+    pcm.mFormatFlags = kAudioFormatFlagIsPacked | kAudioFormatFlagIsSignedInteger;
+    pcm.mBitsPerChannel = 16;
+    int16_t samples[] = {0, 1000, -1000, 32767, -32768};
+    // AudioQueueBuffer's capacity is const in the Apple SDK: use an initialized fixture below.
+    AudioQueueBuffer fixture = {sizeof samples, samples, sizeof samples, NULL, 0, NULL, 0};
+    BoostPCM(&fixture, pcm);
+    assert(samples[0] == 0 && samples[1] == 2000 && samples[2] == -2000);
+    assert(samples[3] > 32000 && samples[4] < -32000);
+    audioGain = 1;
+    int16_t before[5]; memcpy(before, samples, sizeof samples);
+    BoostPCM(&fixture, pcm); assert(!memcmp(before, samples, sizeof samples));
+    audioGain = 2;
+    float floats[] = {0, 0.1f, -0.1f, 1, -1, NAN};
+    AudioQueueBuffer floatFixture = {sizeof floats, floats, sizeof floats, NULL, 0, NULL, 0};
+    pcm.mBitsPerChannel = 32; pcm.mFormatFlags = kAudioFormatFlagIsPacked | kAudioFormatFlagIsFloat;
+    BoostPCM(&floatFixture, pcm);
+    assert(fabsf(floats[1] - 0.2f) < 0.00001 && fabsf(floats[2] + 0.2f) < 0.00001);
+    assert(floats[3] <= 1 && floats[4] >= -1 && floats[5] == 0);
+    puts("PASS: audio gain doubles quiet PCM, preserves silence/unity and bounds amplified integer/float peaks");
     AudioQueueRef testQueue = (AudioQueueRef)(uintptr_t)0x1234;
     assert(AudioQueueStart(testQueue, NULL) == noErr && starts == 1);
     OutputLifecycle(NO); OutputLifecycle(NO);

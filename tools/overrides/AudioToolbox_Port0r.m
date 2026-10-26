@@ -2,6 +2,8 @@
 #import <AudioToolbox/AudioToolbox.h>
 #import <TargetConditionals.h>
 #import <dlfcn.h>
+#include <math.h>
+#include <stdint.h>
 #if TARGET_OS_IOS
 #import <AVFAudio/AVFAudio.h>
 #import <UIKit/UIKit.h>
@@ -31,9 +33,37 @@ static void *AudioFunction(const char *name) {
 static NSMutableDictionary<NSValue *, NSNumber *> *queueIntent;
 static NSRecursiveLock *queueLock;
 static BOOL outputActive = YES;
+static NSMutableDictionary<NSValue *, NSValue *> *queueFormats;
+static float audioGain = 2.0f;
+static float LimitSample(float sample) {
+    if (!isfinite(sample)) return 0;
+    float scaled = sample * audioGain;
+    float magnitude = fabsf(scaled);
+    // Unity gain remains bit-exact; amplified peaks approach full scale smoothly.
+    if (magnitude > 0.85f) scaled = copysignf(0.85f + 0.15f * tanhf((magnitude - 0.85f) / 0.15f), scaled);
+    return scaled;
+}
+static void BoostPCM(AudioQueueBufferRef buffer, AudioStreamBasicDescription format) {
+    if (!buffer || !buffer->mAudioData || audioGain == 1 ||
+        buffer->mAudioDataByteSize > buffer->mAudioDataBytesCapacity ||
+        format.mFormatID != kAudioFormatLinearPCM ||
+        !(format.mFormatFlags & kAudioFormatFlagIsPacked) ||
+        (format.mFormatFlags & (kAudioFormatFlagIsBigEndian | kAudioFormatFlagIsNonInterleaved))) return;
+    if (format.mBitsPerChannel == 16 && (format.mFormatFlags & kAudioFormatFlagIsSignedInteger) &&
+        !(format.mFormatFlags & kAudioFormatFlagIsFloat)) {
+        int16_t *samples = buffer->mAudioData;
+        for (UInt32 i = 0; i < buffer->mAudioDataByteSize / 2; i++) {
+            float value = LimitSample(samples[i] / 32768.0f);
+            samples[i] = (int16_t)fmaxf(-32768, fminf(32767, roundf(value * 32768)));
+        }
+    } else if (format.mBitsPerChannel == 32 && (format.mFormatFlags & kAudioFormatFlagIsFloat)) {
+        float *samples = buffer->mAudioData;
+        for (UInt32 i = 0; i < buffer->mAudioDataByteSize / 4; i++) samples[i] = LimitSample(samples[i]);
+    }
+}
 static void EnsureQueueState(void) {
     static dispatch_once_t once;
-    dispatch_once(&once, ^{ queueLock = [NSRecursiveLock new]; queueIntent = [NSMutableDictionary new]; });
+    dispatch_once(&once, ^{ queueLock = [NSRecursiveLock new]; queueIntent = [NSMutableDictionary new]; queueFormats = [NSMutableDictionary new]; });
 }
 static OSStatus NativeStart(AudioQueueRef queue, const AudioTimeStamp *start) {
     OSStatus (*real)(AudioQueueRef, const AudioTimeStamp *) = AudioFunction("AudioQueueStart");
@@ -68,12 +98,37 @@ __attribute__((constructor)) static void ObserveAudioLifecycle(void) {
 __attribute__((visibility("default")))
 OSStatus AudioQueueNewOutput(const AudioStreamBasicDescription *format, AudioQueueOutputCallback callback,
     void *context, CFRunLoopRef runloop, CFStringRef mode, UInt32 flags, AudioQueueRef *queue) {
+    EnsureQueueState();
+    NSString *gainPath = [NSHomeDirectory() stringByAppendingPathComponent:@"Documents/Port0r/audio-gain.txt"];
+    NSString *gainText = [NSString stringWithContentsOfFile:gainPath encoding:NSUTF8StringEncoding error:nil];
+    float requested = gainText ? gainText.floatValue : 2.0f;
+    audioGain = isfinite(requested) && requested >= 1 && requested <= 4 ? requested : 2;
     ActivateOutput();
     OSStatus (*real)(const AudioStreamBasicDescription *, AudioQueueOutputCallback, void *, CFRunLoopRef, CFStringRef, UInt32, AudioQueueRef *) = AudioFunction("AudioQueueNewOutput");
     OSStatus status = real ? real(format, callback, context, runloop, mode, flags, queue) : kAudio_ParamError;
+    if (status == noErr && queue && *queue && format) {
+        [queueLock lock];
+        queueFormats[[NSValue valueWithPointer:*queue]] = [NSValue valueWithBytes:format objCType:@encode(AudioStreamBasicDescription)];
+        [queueLock unlock];
+        NSLog(@"PORT0R audio gain=%.2fx (audio-gain.txt range 1..4), format=%u bits=%u flags=%u",
+              audioGain, (unsigned)format->mFormatID, (unsigned)format->mBitsPerChannel, (unsigned)format->mFormatFlags);
+    }
     NSLog(@"PORT0R AudioQueueNewOutput status=%d rate=%.0f channels=%u", (int)status,
           format ? format->mSampleRate : 0, format ? (unsigned)format->mChannelsPerFrame : 0);
     return status;
+}
+__attribute__((visibility("default")))
+OSStatus AudioQueueEnqueueBuffer(AudioQueueRef queue, AudioQueueBufferRef buffer,
+    UInt32 count, const AudioStreamPacketDescription *packets) {
+    EnsureQueueState();
+    AudioStreamBasicDescription format = {0};
+    [queueLock lock];
+    NSValue *stored = queueFormats[[NSValue valueWithPointer:queue]];
+    if (stored) [stored getValue:&format size:sizeof format];
+    [queueLock unlock];
+    BoostPCM(buffer, format);
+    OSStatus (*real)(AudioQueueRef, AudioQueueBufferRef, UInt32, const AudioStreamPacketDescription *) = AudioFunction("AudioQueueEnqueueBuffer");
+    return real ? real(queue, buffer, count, packets) : kAudio_ParamError;
 }
 __attribute__((visibility("default")))
 OSStatus AudioQueueSetProperty(AudioQueueRef queue, AudioQueuePropertyID property, const void *data, UInt32 size) {
@@ -117,6 +172,7 @@ __attribute__((visibility("default")))
 OSStatus AudioQueueDispose(AudioQueueRef queue, Boolean immediate) {
     EnsureQueueState(); [queueLock lock];
     [queueIntent removeObjectForKey:[NSValue valueWithPointer:queue]];
+    [queueFormats removeObjectForKey:[NSValue valueWithPointer:queue]];
     // Do not hold our lock while native disposal waits for callbacks.
     [queueLock unlock];
     OSStatus (*real)(AudioQueueRef, Boolean) = AudioFunction("AudioQueueDispose");
