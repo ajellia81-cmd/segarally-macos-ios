@@ -2,13 +2,17 @@ name: iOS conversion feasibility and unsigned IPA
 
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/ios-conversion.yml'
 
 permissions:
   contents: read
 
 jobs:
   convert:
-    runs-on: macos-15
+    runs-on: macos-26
     timeout-minutes: 60
     env:
       GH_TOKEN: ${{ github.token }}
@@ -37,6 +41,7 @@ jobs:
         run: |
           set -euo pipefail
           xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-version
           xcrun --sdk iphoneos --show-sdk-path
           python3 compatibility/tools/convert_app.py --help
       - name: Try conversion without Apple developer credentials
