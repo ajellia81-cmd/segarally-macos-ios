@@ -1,5 +1,12 @@
 # Start-line background flicker investigation
 
+Current disposition: the user found a matching symptom in an original Port0r
+YouTube playthrough and requested an original-rendering stable IPA. The video
+link has not been independently reviewed here, so this is user-reported baseline
+evidence. The texture-sync experiment is removed from the default build. The
+stable package preserves the pinned previously validated IPA's entire payload;
+no flicker fix or newly compiled Xcode build is claimed for that package.
+
 The user's October 26 recording shows background geometry flicker during the
 start countdown. Changing the original frame-rate and speed settings does not
 remove it; antialiasing was left at its default. This does not establish an

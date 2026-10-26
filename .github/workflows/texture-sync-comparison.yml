@@ -1,4 +1,4 @@
-name: Texture synchronization comparison IPA
+name: Original-rendering stable IPA
 on:
   workflow_dispatch:
   push:
@@ -8,7 +8,7 @@ on:
       - 'tools/repack_texture_comparison.py'
 permissions:
   contents: read
-  actions: read
+  actions: write
 jobs:
   compare:
     runs-on: ubuntu-latest
@@ -19,12 +19,12 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh run download 40317867463 --repo ajellia81-cmd/segarally-macos-ios --name SegaRally-LiveContainer-UNSIGNED --dir base
-      - name: Apply only native texture-fence defaults and verify package
-        run: python3 tools/repack_texture_comparison.py
+      - name: Package original renderer defaults and verify every payload file
+        run: python3 tools/repack_texture_comparison.py --original-rendering
       - uses: actions/upload-artifact@v4
         with:
-          name: SegaRally-texture-sync-comparison-UNSIGNED
-          path: build/SegaRally-LiveContainer-texture-sync-UNSIGNED.ipa
+          name: SegaRally-original-rendering-STABLE-UNSIGNED
+          path: build/SegaRally-LiveContainer-STABLE-UNSIGNED.ipa
           if-no-files-found: error
           retention-days: 14
       - uses: actions/upload-artifact@v4
@@ -33,3 +33,22 @@ jobs:
           path: build/texture-comparison-validation.json
           if-no-files-found: error
           retention-days: 7
+      - name: Cancel only superseded queued texture experiment builds
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 - <<'PY'
+          import json,os,urllib.request,urllib.error
+          base='https://api.github.com/repos/ajellia81-cmd/segarally-macos-ios/actions/runs/'
+          headers={'Authorization':'Bearer '+os.environ['GH_TOKEN'],'Accept':'application/vnd.github+json','User-Agent':'segarally-stable-package'}
+          for run in [40328110559,40329391560,40330904777]:
+              with urllib.request.urlopen(urllib.request.Request(base+str(run),headers=headers)) as response: data=json.load(response)
+              if data['status']!='queued':
+                  print('Preserved run',run,'status',data['status']);continue
+              try:
+                  with urllib.request.urlopen(urllib.request.Request(base+str(run)+'/cancel',data=b'',headers=headers,method='POST')): pass
+                  print('Cancelled superseded queued experiment',run)
+              except urllib.error.HTTPError as error:
+                  if error.code==409: print('Run state changed before cancellation',run)
+                  else: raise
+          PY

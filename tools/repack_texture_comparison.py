@@ -7,6 +7,7 @@ payload file must remain byte-identical. LiveContainer still re-signs the IPA.
 """
 from pathlib import Path
 import copy
+import argparse
 import hashlib
 import io
 import json
@@ -17,6 +18,9 @@ from native_texture_sync import SITES
 
 BASE_IPA_SHA256 = 'b8aab5643091218bb60d8c9c2378cda7f7501422e85d4b160943b656928d6ed2'
 MAIN = 'Payload/SegaRally.app/port0r'
+arguments = argparse.ArgumentParser()
+arguments.add_argument('--original-rendering', action='store_true', help='Stable package: preserve all original renderer defaults')
+stable = arguments.parse_args().original_rendering
 
 
 def directories(data):
@@ -86,7 +90,7 @@ with zipfile.ZipFile(io.BytesIO(baseline)) as original:
             raise ValueError(f'Unexpected default for {key}')
         if struct.unpack_from('<I',before,offset+8)[0] != 0x34000060:
             raise ValueError(f'Unexpected existing wait guard for {key}')
-        struct.pack_into('<I',after,offset,0x52800021)
+        if not stable: struct.pack_into('<I',after,offset,0x52800021)
     hash_ranges = []
     for hashes,pages,limit,page_size,hash_size,algorithm in directories(before):
         for page in range(pages):
@@ -102,7 +106,7 @@ with zipfile.ZipFile(io.BytesIO(baseline)) as original:
     seal = plistlib.loads(original.read('Payload/SegaRally.app/_CodeSignature/CodeResources'))
     assert all('port0r' not in seal.get(kind,{}) for kind in ('files','files2'))
     build = Path('build'); build.mkdir(exist_ok=True)
-    output = build/'SegaRally-LiveContainer-texture-sync-UNSIGNED.ipa'
+    output = build/('SegaRally-LiveContainer-STABLE-UNSIGNED.ipa' if stable else 'SegaRally-LiveContainer-texture-sync-UNSIGNED.ipa')
     with zipfile.ZipFile(output,'w') as target:
         target.comment = original.comment
         for entry in original.infolist():
@@ -112,16 +116,18 @@ with zipfile.ZipFile(io.BytesIO(baseline)) as original:
         assert original.namelist() == target.namelist()
         assert check_pages(target.read(MAIN)) == original_pages
         for entry in original.namelist():
-            if entry != MAIN: assert original.read(entry)==target.read(entry),entry
+            if stable or entry != MAIN: assert original.read(entry)==target.read(entry),entry
         assert not any(name.lower().endswith(('.zip','.rom','.chd','.pck')) for name in target.namelist())
 report = {'baseline_run':40317867463,'baseline_ipa_sha256':BASE_IPA_SHA256,
           'ipa_sha256':hashlib.sha256(output.read_bytes()).hexdigest(),
-          'changed_default_instructions':2,'texture_wait_defaults':{key:1 for _,key,_ in SITES},
+          'changed_default_instructions':0 if stable else 2,'texture_wait_defaults':{key:0 if stable else 1 for _,key,_ in SITES},
           'validated_signature_pages':original_pages,'updated_signature_page_hashes':len(hash_ranges),
           'other_payload_files':'byte-identical to validated baseline',
-          'build_method':'binary comparison package on Linux; original full SDK build is the pinned baseline',
-          'signing':'existing ad-hoc CodeDirectory hashes refreshed; no Apple identity; LiveContainer re-signs',
+          'all_payload_files_byte_identical':stable,
+          'build_method':'stable original-rendering package from pinned validated SDK build' if stable else 'binary comparison package on Linux; original full SDK build is the pinned baseline',
+          'signing':'existing ad-hoc signatures preserved; no Apple identity; LiveContainer re-signs' if stable else 'existing ad-hoc CodeDirectory hashes refreshed; no Apple identity; LiveContainer re-signs',
           'device_rendering_verified':False,'flicker_fixed':False}
 (build/'texture-comparison-validation.json').write_text(json.dumps(report,indent=2))
 print(json.dumps(report,indent=2))
-print('PASS: exact baseline, two native defaults, all code-page hashes, unchanged resources, ZIP integrity and no ROM archives')
+print('PASS: original renderer defaults and all payload files preserved; code-page hashes, resources, ZIP integrity and no ROM archives verified' if stable else
+      'PASS: exact baseline, two native defaults, all code-page hashes, unchanged resources, ZIP integrity and no ROM archives')
