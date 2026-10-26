@@ -35,7 +35,7 @@ jobs:
                   if version >= (26,): candidates.append((version, developer))
           if not candidates: raise SystemExit('No installed Xcode with iOS 26 or later SDK')
           version, developer = max(candidates)
-          with open(os.environ['GITHUB_ENV'], 'a') as f: f.write('DEVELOPER_DIR=' + developer + '\\n')
+          with open(os.environ['GITHUB_ENV'], 'a') as f: f.write('DEVELOPER_DIR=' + developer + '\n')
           print('Selected', developer, 'iOS SDK', version)
           PY
       - name: Fetch Port0r official release
