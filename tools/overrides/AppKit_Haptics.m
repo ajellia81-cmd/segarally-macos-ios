@@ -73,7 +73,8 @@ static void ResumeMotors(void) {
 static void CleanupMotor(id motor, SEL cmd) {
     @synchronized (motor) {
         CHHapticEngine *engine = MotorGet(motor, @"engine");
-        engine.stoppedHandler = nil; engine.resetHandler = nil;
+        engine.stoppedHandler = ^(CHHapticEngineStoppedReason reason) {};
+        engine.resetHandler = ^{};
         @synchronized (liveMotors) { [liveMotors removeObject:motor]; }
         objc_setAssociatedObject(motor, &trackedEngineKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
         ((void (*)(id,SEL))originalCleanup)(motor, cmd);

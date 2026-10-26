@@ -97,7 +97,9 @@ int main(void) { @autoreleasepool {
     assert(engineStarts == 2 && playerCreations == 3 && lastIntensity == 0.25f);
     [motor cleanup];
     assert(motor.engine == nil && motor.player == nil && liveMotors.count == 0);
-    assert(sameEngine.stoppedHandler == nil && sameEngine.resetHandler == nil);
+    sameEngine.stoppedHandler(CHHapticEngineStoppedReasonApplicationSuspended);
+    sameEngine.resetHandler();
+    assert(motor.engine == nil && motor.player == nil && liveMotors.count == 0);
     puts("PASS: stopped/reset engines retained, foreground engine/player recovery and normal vibration restored");
     puts("PASS: actual SDL motor warm-up creates and retains a silent player, reuses it and preserves real intensity; unsupported motors skipped");
 } return 0; }
