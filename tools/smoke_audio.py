@@ -42,23 +42,23 @@ int main(void) { @autoreleasepool {
     // AudioQueueBuffer's capacity is const in the Apple SDK: use an initialized fixture below.
     AudioQueueBuffer fixture = {sizeof samples, samples, sizeof samples, NULL, 0, NULL, 0};
     BoostPCM(&fixture, pcm);
-    assert(samples[0] == 0 && samples[1] == 2000 && samples[2] == -2000);
+    assert(samples[0] == 0 && samples[1] == 4000 && samples[2] == -4000);
     assert(samples[3] > 32000 && samples[4] < -32000);
     float floats[] = {0, 0.1f, -0.1f, 1, -1, NAN};
     AudioQueueBuffer floatFixture = {sizeof floats, floats, sizeof floats, NULL, 0, NULL, 0};
     pcm.mBitsPerChannel = 32; pcm.mFormatFlags = kAudioFormatFlagIsPacked | kAudioFormatFlagIsFloat;
     BoostPCM(&floatFixture, pcm);
-    assert(fabsf(floats[1] - 0.2f) < 0.00001 && fabsf(floats[2] + 0.2f) < 0.00001);
+    assert(fabsf(floats[1] - 0.4f) < 0.00001 && fabsf(floats[2] + 0.4f) < 0.00001);
     assert(floats[3] <= 1 && floats[4] >= -1 && floats[5] == 0);
-    puts("PASS: audio gain doubles quiet PCM, preserves silence and bounds amplified integer/float peaks");
+    puts("PASS: audio gain quadruples quiet PCM, preserves silence and bounds amplified integer/float peaks");
     AudioQueueRef testQueue = NULL;
     pcm.mBitsPerChannel = 16; pcm.mFormatFlags = kAudioFormatFlagIsPacked | kAudioFormatFlagIsSignedInteger;
     assert(AudioQueueNewOutput(&pcm, NULL, NULL, NULL, NULL, 0, &testQueue) == noErr);
     int16_t routeSamples[] = {1000,-1000};
     AudioQueueBuffer routeFixture = {sizeof routeSamples, routeSamples, sizeof routeSamples, NULL, 0, NULL, 0};
     assert(AudioQueueEnqueueBuffer(testQueue, &routeFixture, 0, NULL) == noErr);
-    assert(enqueues == 1 && Port0rAudioCallsR2() == 1 && routeSamples[0] == 2000 && routeSamples[1] == -2000);
-    puts("PASS: actual NewOutput format registration and EnqueueBuffer path doubles PCM and forwards to native queue");
+    assert(enqueues == 1 && Port0rAudioCallsR2() == 1 && routeSamples[0] == 4000 && routeSamples[1] == -4000);
+    puts("PASS: actual NewOutput format registration and EnqueueBuffer path quadruples PCM and forwards to native queue");
     assert(AudioQueueStart(testQueue, NULL) == noErr && starts == 1);
     OutputLifecycle(NO); OutputLifecycle(NO);
     assert(pauses == 1 && starts == 1);

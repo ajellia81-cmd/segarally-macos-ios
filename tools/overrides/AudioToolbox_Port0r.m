@@ -56,12 +56,12 @@ static float ProbePCM(AudioQueueBufferRef buffer, AudioStreamBasicDescription fo
     }
     return peak;
 }
-static const float audioGain = 2.0f;
+static const float audioGain = 4.0f;
 static float LimitSample(float sample) {
     if (!isfinite(sample)) return 0;
     float scaled = sample * audioGain;
     float magnitude = fabsf(scaled);
-    // Fixed 2x gain; amplified peaks approach full scale smoothly.
+    // Fixed 4x gain; amplified peaks approach full scale smoothly.
     if (magnitude > 0.85f) scaled = copysignf(0.85f + 0.15f * tanhf((magnitude - 0.85f) / 0.15f), scaled);
     return scaled;
 }
@@ -150,7 +150,7 @@ OSStatus AudioQueueEnqueueBuffer(AudioQueueRef queue, AudioQueueBufferRef buffer
     BoostPCM(buffer, format);
     if (inspect && (before > 0 || before < 0) && !atomic_exchange(&audioMeasuredR2, true)) {
         float after = ProbePCM(buffer, format);
-        NSLog(@"PORT0R R2 AUDIO calls=%llu format=%u flags=%u bits=%u bytes=%u peakBefore=%.5f peakAfter=%.5f gain=2x supported=%d",
+        NSLog(@"PORT0R R2 AUDIO calls=%llu format=%u flags=%u bits=%u bytes=%u peakBefore=%.5f peakAfter=%.5f gain=4x supported=%d",
               (unsigned long long)calls + 1, (unsigned)format.mFormatID, (unsigned)format.mFormatFlags,
               (unsigned)format.mBitsPerChannel, buffer ? (unsigned)buffer->mAudioDataByteSize : 0, before, after, before >= 0);
     }
