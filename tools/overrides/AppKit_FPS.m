@@ -5,6 +5,8 @@
 #import <objc/runtime.h>
 #import <stdatomic.h>
 #import <dlfcn.h>
+extern uint64_t Port0rInputCallsR2(void);
+extern uint64_t Port0rHapticCallsR2(void);
 
 static _Atomic uint64_t presentedFrames;
 static _Atomic uint64_t requestedFrames;
@@ -83,9 +85,17 @@ static void UpdateFPS(void) {
     uint64_t pixels = atomic_load_explicit(&outputPixels, memory_order_relaxed);
     double elapsed = lastUpdate ? now - lastUpdate : 0;
     lastUpdate = now;
-    uint64_t (*audio)(void) = dlsym(RTLD_DEFAULT, "Port0rAudioCallsR2");
-    uint64_t (*input)(void) = dlsym(RTLD_DEFAULT, "Port0rInputCallsR2");
-    uint64_t (*haptic)(void) = dlsym(RTLD_DEFAULT, "Port0rHapticCallsR2");
+    static void *audioImage;
+    if (!audioImage) {
+        Dl_info image = {0};
+        if (dladdr((void *)ConfigureRefreshRequest, &image) && image.dli_fname) {
+            NSString *path = [[@(image.dli_fname) stringByDeletingLastPathComponent] stringByAppendingPathComponent:@"libShim_AudioToolbox.dylib"];
+            audioImage = dlopen(path.fileSystemRepresentation, RTLD_NOLOAD | RTLD_LAZY);
+        }
+    }
+    uint64_t (*audio)(void) = audioImage ? dlsym(audioImage, "Port0rAudioCallsR2") : NULL;
+    uint64_t (*input)(void) = Port0rInputCallsR2;
+    uint64_t (*haptic)(void) = Port0rHapticCallsR2;
     unsigned long long a = audio ? audio() : 0, b = input ? input() : 0, h = haptic ? haptic() : 0;
     static unsigned reports;
     if (!(reports++ % 5)) NSLog(@"PORT0R R2 runtime A=%llu S=%llu H=%llu audioSymbol=%d inputSymbol=%d hapticSymbol=%d",
