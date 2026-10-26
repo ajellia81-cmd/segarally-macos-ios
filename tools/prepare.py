@@ -49,7 +49,23 @@ s = p.read_text().replace('return @"iPad";', 'return @"iPhone / iPad Native";')
 s = s.replace('CGRectMake(0, 0, 1376, 1032)',
               'CGRectMake(0, 0, MAX(UIScreen.mainScreen.bounds.size.width, UIScreen.mainScreen.bounds.size.height), MIN(UIScreen.mainScreen.bounds.size.width, UIScreen.mainScreen.bounds.size.height))')
 s = s.replace(': 2.0;', ': UIScreen.mainScreen.nativeScale;')
+# A keyboard fallback is used only if SDL has no Select/Back binding for a
+# connected Backbone; the original game's 5 key inserts a coin.
+s += '''
+__attribute__((visibility("default"))) void Port0rCoinKey(BOOL down) {
+    NSEvent *e = [NSEvent new];
+    e.type = down ? NSEventTypeKeyDown : NSEventTypeKeyUp;
+    e.keyCode = 23; e.characters = @"5"; e.charactersIgnoringModifiers = @"5";
+    e.timestamp = NSProcessInfo.processInfo.systemUptime;
+    ShimDispatch(e);
+}
+'''
 p.write_text(s)
+# AVAudioSession is used only to activate the native output route. Queue PCM
+# conversion/playback stays in Apple's AudioToolbox.
+converter = root / 'tools/convert_app.py'
+converter.write_text(converter.read_text().replace('"-framework", "GameController"]',
+    '"-framework", "GameController", "-framework", "AVFAudio"]'))
 # Native GCController is available on iOS. Avoid the unavailable Mac HID backend.
 target = root / 'shim/overrides/AppKit_Port0r.m'
 target.write_text('''#import <UIKit/UIKit.h>

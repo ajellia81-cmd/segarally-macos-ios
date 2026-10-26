@@ -61,6 +61,8 @@ jobs:
         run: python3 tools/smoke_display.py
       - name: Verify SDL icon bitmap allocation and copy
         run: python3 tools/smoke_bitmap.py
+      - name: Verify SDL default audio device bridge
+        run: python3 tools/smoke_audio.py
       - name: Preserve component license notices
         run: |
           curl -fL https://raw.githubusercontent.com/jacquesdupontd/port0r/main/THIRD-PARTY-NOTICES.txt -o build/SegaRally.app/THIRD-PARTY-NOTICES.txt
