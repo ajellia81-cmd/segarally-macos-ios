@@ -21,31 +21,38 @@ static BOOL IsGameGPUCaller(const void *caller) {
     Dl_info info = {0};
     return dladdr(caller, &info) && info.dli_fname && strstr(info.dli_fname, "libMoltenVK");
 }
-static void GameCommit(id self, SEL cmd) {
-    if (IsGameGPUCaller(__builtin_return_address(0)) && !atomic_load_explicit(&gameActive, memory_order_acquire)) {
-        NSLog(@"PORT0R background: pausing MoltenVK GPU submission until foreground");
-        if (NSThread.isMainThread) {
-            // Keep the lifecycle run loop alive if the game's loop is on main.
-            while (!atomic_load_explicit(&gameActive, memory_order_acquire))
-                CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.05, true);
-        } else {
-            [foregroundCondition lock];
-            while (!atomic_load_explicit(&gameActive, memory_order_acquire))
-                [foregroundCondition wait];
-            [foregroundCondition unlock];
-        }
-        NSLog(@"PORT0R foreground: resuming MoltenVK GPU submission");
+__attribute__((visibility("default"))) void Port0rWaitForForeground(void) {
+    if (atomic_load_explicit(&gameActive, memory_order_acquire)) return;
+    NSLog(@"PORT0R game loop paused until foreground");
+    if (NSThread.isMainThread) {
+        while (!atomic_load_explicit(&gameActive, memory_order_acquire))
+            CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.05, true);
+    } else {
+        [foregroundCondition lock];
+        while (!atomic_load_explicit(&gameActive, memory_order_acquire))
+            [foregroundCondition wait];
+        [foregroundCondition unlock];
     }
+    NSLog(@"PORT0R game loop resumed");
+}
+static void GameCommit(id self, SEL cmd) {
+    if (IsGameGPUCaller(__builtin_return_address(0))) Port0rWaitForForeground();
     ((void (*)(id, SEL))nativeCommit)(self, cmd);
 }
+extern void Port0rImportDownloads(void);
 __attribute__((constructor)) static void InstallBackgroundGate(void) {
     foregroundCondition = [NSCondition new];
+    atomic_store(&gameActive, UIApplication.sharedApplication.applicationState != UIApplicationStateBackground);
     NSNotificationCenter *nc = NSNotificationCenter.defaultCenter;
     for (NSString *name in @[UIApplicationWillResignActiveNotification, UIApplicationDidEnterBackgroundNotification,
                             UISceneWillDeactivateNotification, UISceneDidEnterBackgroundNotification])
         [nc addObserverForName:name object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n) { SetGameActive(NO); }];
     for (NSString *name in @[UIApplicationDidBecomeActiveNotification, UISceneDidActivateNotification])
-        [nc addObserverForName:name object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n) { SetGameActive(YES); }];
+        [nc addObserverForName:name object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n) { SetGameActive(YES);
+            // Retry when returning after adding archives in Files. Serial main
+            // delivery prevents a second import racing the startup import.
+            Port0rImportDownloads();
+        }];
     id<MTLDevice> device = MTLCreateSystemDefaultDevice();
     id<MTLCommandQueue> queue = [device newCommandQueue];
     id<MTLCommandBuffer> buffer = [queue commandBuffer];

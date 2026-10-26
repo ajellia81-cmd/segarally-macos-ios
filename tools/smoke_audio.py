@@ -8,11 +8,43 @@ import subprocess
 
 overrides = Path('compatibility/shim/overrides').resolve()
 test = Path('build/audio_smoke.m')
-test.write_text('#import "' + str(overrides / 'CoreAudio_Port0r.m') + '"\n' +
+test.write_text('#define PORT0R_AUDIO_TEST 1\n#import "' + str(overrides / 'CoreAudio_Port0r.m') + '"\n' +
                 '#import "' + str(overrides / 'AudioToolbox_Port0r.m') + '"\n' + r'''
 #import <CoreAudio/AudioHardware.h>
 #include <assert.h>
+#include <string.h>
+static int starts, pauses, stops, disposals;
+static OSStatus TestStart(AudioQueueRef q, const AudioTimeStamp *t) { starts++; return noErr; }
+static OSStatus TestPause(AudioQueueRef q) { pauses++; return noErr; }
+static OSStatus TestStop(AudioQueueRef q, Boolean immediate) { stops++; return noErr; }
+static OSStatus TestDispose(AudioQueueRef q, Boolean immediate) { disposals++; return noErr; }
+void *AudioFunction(const char *name) {
+    if (!strcmp(name, "AudioQueueStart")) return (void *)TestStart;
+    if (!strcmp(name, "AudioQueuePause")) return (void *)TestPause;
+    if (!strcmp(name, "AudioQueueStop")) return (void *)TestStop;
+    if (!strcmp(name, "AudioQueueDispose")) return (void *)TestDispose;
+    return NULL;
+}
 int main(void) { @autoreleasepool {
+    AudioQueueRef testQueue = (AudioQueueRef)(uintptr_t)0x1234;
+    assert(AudioQueueStart(testQueue, NULL) == noErr && starts == 1);
+    OutputLifecycle(NO); OutputLifecycle(NO);
+    assert(pauses == 1 && starts == 1);
+    OutputLifecycle(YES); OutputLifecycle(YES);
+    assert(starts == 2);
+    assert(AudioQueuePause(testQueue) == noErr && pauses == 2);
+    OutputLifecycle(NO); OutputLifecycle(YES);
+    assert(starts == 2); // a user-paused queue must stay paused
+    OutputLifecycle(NO);
+    assert(AudioQueueStart(testQueue, NULL) == noErr && starts == 2);
+    OutputLifecycle(YES);
+    assert(starts == 3); // deferred start while backgrounded
+    assert(AudioQueueStop(testQueue, true) == noErr && stops == 1);
+    OutputLifecycle(NO); OutputLifecycle(YES);
+    assert(starts == 3);
+    assert(AudioQueueDispose(testQueue, true) == noErr && disposals == 1);
+    assert(queueIntent.count == 0);
+    puts("PASS: audio background pause, foreground resume, deferred start, user pause/stop intent and disposal");
     Port0rAudioAddress address = {kAudioHardwarePropertyDevices, kAudioObjectPropertyScopeGlobal, 0};
     uint32_t size = 0, device = 0;
     assert(Port0rAudioSize(1, &address, 0, NULL, &size) == noErr && size == sizeof(device));

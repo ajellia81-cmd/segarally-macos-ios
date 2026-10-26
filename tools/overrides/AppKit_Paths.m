@@ -59,6 +59,57 @@ static BOOL PreparePathPair(NSString *native, NSString *visible) {
     NSLog(@"PORT0R path unified %@ -> %@ backup=%@", native, visible, backup ?: @"none");
     return YES;
 }
+// Import explicitly: the desktop importer mixes search-path APIs, C++ filesystem
+// and focus events which do not have identical behavior in LiveContainer.
+static BOOL ImportDownloads(NSString *downloads, NSString *roms) {
+    NSFileManager *fm = NSFileManager.defaultManager;
+    NSError *error = nil;
+    NSArray<NSString *> *names = [fm contentsOfDirectoryAtPath:downloads error:&error];
+    if (!names) { NSLog(@"PORT0R Downloads scan failed %@: %@", downloads, error); return NO; }
+    if (![fm createDirectoryAtPath:roms withIntermediateDirectories:YES attributes:nil error:&error]) return NO;
+    BOOL ok = YES;
+    for (NSString *wanted in @[@"srallyc.zip", @"segabill.zip"]) {
+        NSString *match = nil;
+        for (NSString *name in names) if ([name caseInsensitiveCompare:wanted] == NSOrderedSame) { match = name; break; }
+        if (!match) { NSLog(@"PORT0R Downloads missing %@ at %@", wanted, downloads); continue; }
+        NSString *source = [downloads stringByAppendingPathComponent:match];
+        NSString *target = [roms stringByAppendingPathComponent:wanted];
+        BOOL directory = NO;
+        if (![fm fileExistsAtPath:source isDirectory:&directory] || directory) { ok = NO; continue; }
+        NSFileHandle *handle = [NSFileHandle fileHandleForReadingAtPath:source];
+        NSData *magic = [handle readDataOfLength:4]; [handle closeFile];
+        const unsigned char *b = magic.bytes;
+        if (magic.length != 4 || b[0] != 'P' || b[1] != 'K' || b[2] != 3 || b[3] != 4) {
+            NSLog(@"PORT0R Downloads rejected %@: not a ZIP local-file header", match); ok = NO; continue;
+        }
+        if ([fm contentsEqualAtPath:source andPath:target]) continue;
+        NSString *temp = [roms stringByAppendingPathComponent:[@".import-" stringByAppendingString:NSUUID.UUID.UUIDString]];
+        if (![fm copyItemAtPath:source toPath:temp error:&error]) {
+            NSLog(@"PORT0R Downloads copy failed %@: %@", match, error); ok = NO; continue;
+        }
+        // Preserve a prior ROM before replacing; never touch the source archive.
+        if ([fm fileExistsAtPath:target]) {
+            NSString *backup = [target stringByAppendingFormat:@".before-import-%@", NSUUID.UUID.UUIDString];
+            if (![fm moveItemAtPath:target toPath:backup error:&error]) {
+                [fm removeItemAtPath:temp error:nil]; ok = NO; continue;
+            }
+            if (![fm moveItemAtPath:temp toPath:target error:&error]) {
+                [fm moveItemAtPath:backup toPath:target error:nil];
+                [fm removeItemAtPath:temp error:nil]; ok = NO; continue;
+            }
+        } else if (![fm moveItemAtPath:temp toPath:target error:&error]) {
+            [fm removeItemAtPath:temp error:nil]; ok = NO; continue;
+        }
+        NSLog(@"PORT0R Downloads imported %@ -> %@ bytes=%@", source, target,
+              [fm attributesOfItemAtPath:target error:nil][NSFileSize]);
+    }
+    return ok;
+}
+__attribute__((visibility("default"))) void Port0rImportDownloads(void) {
+    NSString *home = NSHomeDirectory();
+    ImportDownloads([home stringByAppendingPathComponent:@"Documents/Downloads"],
+                    [home stringByAppendingPathComponent:@"Documents/Port0r/srallyc/roms"]);
+}
 __attribute__((visibility("default"))) void Port0rPreparePaths(void) {
     NSString *home = NSHomeDirectory();
     BOOL downloads = PreparePathPair([home stringByAppendingPathComponent:@"Downloads"],
@@ -66,6 +117,7 @@ __attribute__((visibility("default"))) void Port0rPreparePaths(void) {
     BOOL data = PreparePathPair([home stringByAppendingPathComponent:@"Library/Application Support/Port0r"],
                                 [home stringByAppendingPathComponent:@"Documents/Port0r"]);
     NSLog(@"PORT0R import path status downloads=%d data=%d", downloads, data);
+    Port0rImportDownloads();
     for (NSString *file in @[@"srallyc.zip", @"segabill.zip"]) {
         NSString *path = [[home stringByAppendingPathComponent:@"Documents/Downloads"] stringByAppendingPathComponent:file];
         NSDictionary *attributes = [NSFileManager.defaultManager attributesOfItemAtPath:path error:nil];

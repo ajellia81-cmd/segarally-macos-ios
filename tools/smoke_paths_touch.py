@@ -45,6 +45,30 @@ int main(void) { @autoreleasepool {
     assert(std::filesystem::equivalent(imported, visible));
     assert(PreparePathPair(nativeDownloads, downloads)); // idempotent, no new backup
     assert(PreparePathPair(nativeData, data));
+    NSString *roms = [data stringByAppendingPathComponent:@"srallyc/roms"];
+    unsigned char placeholder[] = {'P','K',3,4,'t','e','s','t'};
+    NSData *archive = [NSData dataWithBytes:placeholder length:sizeof placeholder];
+    [archive writeToFile:[downloads stringByAppendingPathComponent:@"SRALLYC.ZIP"] atomically:YES];
+    [archive writeToFile:[downloads stringByAppendingPathComponent:@"segabill.zip"] atomically:YES];
+    assert(ImportDownloads(downloads, roms));
+    assert([fm contentsEqualAtPath:[downloads stringByAppendingPathComponent:@"SRALLYC.ZIP"]
+                          andPath:[roms stringByAppendingPathComponent:@"srallyc.zip"]]);
+    assert([fm contentsEqualAtPath:[downloads stringByAppendingPathComponent:@"segabill.zip"]
+                          andPath:[roms stringByAppendingPathComponent:@"segabill.zip"]]);
+    assert(ImportDownloads(downloads, roms)); // idempotent
+    [@"not an archive" writeToFile:[downloads stringByAppendingPathComponent:@"segabill.zip"] atomically:YES encoding:NSUTF8StringEncoding error:nil];
+    assert(!ImportDownloads(downloads, roms));
+    assert([[NSData dataWithContentsOfFile:[roms stringByAppendingPathComponent:@"segabill.zip"]] isEqual:archive]);
+    unsigned char replacement[] = {'P','K',3,4,'n','e','w'};
+    [[NSData dataWithBytes:replacement length:sizeof replacement] writeToFile:[downloads stringByAppendingPathComponent:@"segabill.zip"] atomically:YES];
+    assert(ImportDownloads(downloads, roms));
+    BOOL backupFound = NO;
+    for (NSString *name in [fm contentsOfDirectoryAtPath:roms error:nil])
+        if ([name hasPrefix:@"segabill.zip.before-import-"]) {
+            backupFound = [[NSData dataWithContentsOfFile:[roms stringByAppendingPathComponent:name]] isEqual:archive];
+        }
+    assert(backupFound);
+    puts("PASS: direct Downloads import, uppercase filenames, idempotence, invalid-header rejection and replacement backup");
     [fm removeItemAtPath:home error:nil];
     puts("PASS: C++ Downloads import and canonical game reader share files; existing data/conflicts backed up; aliases idempotent");
     Port0rTouchState state = {0};

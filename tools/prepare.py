@@ -55,7 +55,8 @@ expanded = subprocess.check_output(['xcrun', '--sdk', 'macosx', 'clang', '-E', '
 slots = re.findall(r'^SDL_\w+$', expanded, re.M)
 assert len(slots) > 800 and len(slots) == len(set(slots))
 names = ['SDL_GetVersion', 'SDL_CreateWindow', 'SDL_GetWindowFlags', 'SDL_SetWindowFullscreen',
-         'SDL_SetWindowDisplayMode', 'SDL_SetWindowSize']
+         'SDL_SetWindowDisplayMode', 'SDL_SetWindowSize', 'SDL_PollEvent', 'SDL_PumpEvents',
+         'SDL_WaitEvent', 'SDL_WaitEventTimeout']
 (root / 'shim/overrides/Port0rSDLSlots.h').write_text(
     '// Generated from Mac SDL 2.30.3 dynapi ABI, zlib-licensed source in tools/vendor.\n'
     + '#define PORT0R_SDL_SLOTCOUNT ' + str(len(slots)) + '\n'

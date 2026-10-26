@@ -25,6 +25,15 @@ static int DisplayMode(void *window, const void *mode) { return 0; }
 static void WindowSize(void *window, int width, int height) {
     NSLog(@"PORT0R iOS fixed window: ignored desktop resize %dx%d", width, height);
 }
+extern void Port0rWaitForForeground(void);
+static int (*pollEvent)(void *);
+static void (*pumpEvents)(void);
+static int (*waitEvent)(void *);
+static int (*waitEventTimeout)(void *, int);
+static int PollEvent(void *event) { Port0rWaitForForeground(); return pollEvent(event); }
+static void PumpEvents(void) { Port0rWaitForForeground(); pumpEvents(); }
+static int WaitEvent(void *event) { Port0rWaitForForeground(); return waitEvent(event); }
+static int WaitEventTimeout(void *event, int timeout) { Port0rWaitForForeground(); return waitEventTimeout(event, timeout); }
 static int ApplyPolicy(void *raw, uint32_t bytes) {
     if (!raw || bytes != PORT0R_SDL_SLOTCOUNT * sizeof(void *)) return -1;
     void **table = raw;
@@ -32,9 +41,17 @@ static int ApplyPolicy(void *raw, uint32_t bytes) {
     if (!table[PORT0R_SLOT_SDL_GetVersion]) return -1;
     ((void (*)(PolicyVersion *))table[PORT0R_SLOT_SDL_GetVersion])(&version);
     if (version.major != 2 || version.minor != 30 || version.patch != 3) return -1;
+    pollEvent = table[PORT0R_SLOT_SDL_PollEvent];
+    pumpEvents = table[PORT0R_SLOT_SDL_PumpEvents];
+    waitEvent = table[PORT0R_SLOT_SDL_WaitEvent];
+    waitEventTimeout = table[PORT0R_SLOT_SDL_WaitEventTimeout];
     createWindow = table[PORT0R_SLOT_SDL_CreateWindow];
     getWindowFlags = table[PORT0R_SLOT_SDL_GetWindowFlags];
     if (!createWindow || !getWindowFlags) return -1;
+    table[PORT0R_SLOT_SDL_PollEvent] = (void *)PollEvent;
+    table[PORT0R_SLOT_SDL_PumpEvents] = (void *)PumpEvents;
+    table[PORT0R_SLOT_SDL_WaitEvent] = (void *)WaitEvent;
+    table[PORT0R_SLOT_SDL_WaitEventTimeout] = (void *)WaitEventTimeout;
     table[PORT0R_SLOT_SDL_CreateWindow] = (void *)CreateWindow;
     table[PORT0R_SLOT_SDL_GetWindowFlags] = (void *)WindowFlags;
     table[PORT0R_SLOT_SDL_SetWindowFullscreen] = (void *)Fullscreen;

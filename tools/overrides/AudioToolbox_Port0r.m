@@ -4,6 +4,7 @@
 #import <dlfcn.h>
 #if TARGET_OS_IOS
 #import <AVFAudio/AVFAudio.h>
+#import <UIKit/UIKit.h>
 #endif
 
 static void ActivateOutput(void) {
@@ -16,12 +17,54 @@ static void ActivateOutput(void) {
           active, session.sampleRate, session.outputVolume, session.currentRoute.outputs, error);
 #endif
 }
+#ifdef PORT0R_AUDIO_TEST
+extern void *AudioFunction(const char *name);
+#else
 static void *AudioFunction(const char *name) {
     static void *library;
     static dispatch_once_t once;
     dispatch_once(&once, ^{ library = dlopen("/System/Library/Frameworks/AudioToolbox.framework/AudioToolbox", RTLD_LAZY); });
     return library ? dlsym(library, name) : NULL;
 }
+#endif
+// Keep the user's playback intent separate from lifecycle-induced pauses.
+static NSMutableDictionary<NSValue *, NSNumber *> *queueIntent;
+static NSRecursiveLock *queueLock;
+static BOOL outputActive = YES;
+static void EnsureQueueState(void) {
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{ queueLock = [NSRecursiveLock new]; queueIntent = [NSMutableDictionary new]; });
+}
+static OSStatus NativeStart(AudioQueueRef queue, const AudioTimeStamp *start) {
+    OSStatus (*real)(AudioQueueRef, const AudioTimeStamp *) = AudioFunction("AudioQueueStart");
+    return real ? real(queue, start) : kAudio_ParamError;
+}
+static void OutputLifecycle(BOOL active) {
+    EnsureQueueState(); [queueLock lock];
+    if (outputActive != active) {
+        outputActive = active;
+        if (active) ActivateOutput();
+        OSStatus (*pause)(AudioQueueRef) = AudioFunction("AudioQueuePause");
+        for (NSValue *key in queueIntent) if (queueIntent[key].boolValue) {
+            OSStatus status = active ? NativeStart((AudioQueueRef)key.pointerValue, NULL)
+                                    : (pause ? pause((AudioQueueRef)key.pointerValue) : kAudio_ParamError);
+            NSLog(@"PORT0R audio lifecycle active=%d status=%d", active, (int)status);
+        }
+    }
+    [queueLock unlock];
+}
+#if TARGET_OS_IOS
+__attribute__((constructor)) static void ObserveAudioLifecycle(void) {
+    EnsureQueueState();
+    outputActive = UIApplication.sharedApplication.applicationState != UIApplicationStateBackground;
+    NSNotificationCenter *nc = NSNotificationCenter.defaultCenter;
+    for (NSString *name in @[UIApplicationWillResignActiveNotification, UIApplicationDidEnterBackgroundNotification,
+                            UISceneWillDeactivateNotification, UISceneDidEnterBackgroundNotification])
+        [nc addObserverForName:name object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n) { OutputLifecycle(NO); }];
+    for (NSString *name in @[UIApplicationDidBecomeActiveNotification, UISceneDidActivateNotification])
+        [nc addObserverForName:name object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n) { OutputLifecycle(YES); }];
+}
+#endif
 __attribute__((visibility("default")))
 OSStatus AudioQueueNewOutput(const AudioStreamBasicDescription *format, AudioQueueOutputCallback callback,
     void *context, CFRunLoopRef runloop, CFStringRef mode, UInt32 flags, AudioQueueRef *queue) {
@@ -46,9 +89,36 @@ OSStatus AudioQueueSetProperty(AudioQueueRef queue, AudioQueuePropertyID propert
 }
 __attribute__((visibility("default")))
 OSStatus AudioQueueStart(AudioQueueRef queue, const AudioTimeStamp *start) {
-    ActivateOutput();
-    OSStatus (*real)(AudioQueueRef, const AudioTimeStamp *) = AudioFunction("AudioQueueStart");
-    OSStatus status = real ? real(queue, start) : kAudio_ParamError;
+    EnsureQueueState(); [queueLock lock];
+    OSStatus status = noErr;
+    if (outputActive) { ActivateOutput(); status = NativeStart(queue, start); }
+    if (status == noErr) queueIntent[[NSValue valueWithPointer:queue]] = @YES;
+    [queueLock unlock];
     NSLog(@"PORT0R AudioQueueStart status=%d", (int)status);
     return status;
+}
+__attribute__((visibility("default")))
+OSStatus AudioQueuePause(AudioQueueRef queue) {
+    EnsureQueueState(); [queueLock lock];
+    OSStatus (*real)(AudioQueueRef) = AudioFunction("AudioQueuePause");
+    OSStatus status = real ? real(queue) : kAudio_ParamError;
+    if (status == noErr) queueIntent[[NSValue valueWithPointer:queue]] = @NO;
+    [queueLock unlock]; return status;
+}
+__attribute__((visibility("default")))
+OSStatus AudioQueueStop(AudioQueueRef queue, Boolean immediate) {
+    EnsureQueueState(); [queueLock lock];
+    OSStatus (*real)(AudioQueueRef, Boolean) = AudioFunction("AudioQueueStop");
+    OSStatus status = real ? real(queue, immediate) : kAudio_ParamError;
+    if (status == noErr) queueIntent[[NSValue valueWithPointer:queue]] = @NO;
+    [queueLock unlock]; return status;
+}
+__attribute__((visibility("default")))
+OSStatus AudioQueueDispose(AudioQueueRef queue, Boolean immediate) {
+    EnsureQueueState(); [queueLock lock];
+    [queueIntent removeObjectForKey:[NSValue valueWithPointer:queue]];
+    // Do not hold our lock while native disposal waits for callbacks.
+    [queueLock unlock];
+    OSStatus (*real)(AudioQueueRef, Boolean) = AudioFunction("AudioQueueDispose");
+    return real ? real(queue, immediate) : kAudio_ParamError;
 }

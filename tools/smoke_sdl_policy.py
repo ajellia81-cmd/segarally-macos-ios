@@ -6,6 +6,12 @@ overrides = Path('compatibility/shim/overrides').resolve()
 test = Path('build/sdl_policy_smoke.m')
 test.write_text('#define PORT0R_POLICY_TEST 1\n#import "' + str(overrides / 'AppKit_SDLPolicy.m') + '"\n' + r'''
 #include <assert.h>
+static int gateCalls, pollCalls, pumpCalls, waitCalls;
+void Port0rWaitForForeground(void) { gateCalls++; }
+static int NativePoll(void *event) { pollCalls++; return 7; }
+static void NativePump(void) { pumpCalls++; }
+static int NativeWait(void *event) { waitCalls++; return 8; }
+static int NativeWaitTimeout(void *event, int timeout) { waitCalls++; return timeout; }
 static uint32_t seenFlags;
 static int forbiddenCalls;
 static void Version(PolicyVersion *v) { *v = (PolicyVersion){2,30,3}; }
@@ -21,7 +27,17 @@ int main(void) { @autoreleasepool {
     table[PORT0R_SLOT_SDL_GetVersion] = (void *)Version;
     table[PORT0R_SLOT_SDL_CreateWindow] = (void *)NativeCreate;
     table[PORT0R_SLOT_SDL_GetWindowFlags] = (void *)NativeFlags;
+    table[PORT0R_SLOT_SDL_PollEvent] = (void *)NativePoll;
+    table[PORT0R_SLOT_SDL_PumpEvents] = (void *)NativePump;
+    table[PORT0R_SLOT_SDL_WaitEvent] = (void *)NativeWait;
+    table[PORT0R_SLOT_SDL_WaitEventTimeout] = (void *)NativeWaitTimeout;
     assert(ApplyPolicy(table, sizeof table) == 0);
+    assert(((int(*)(void *))table[PORT0R_SLOT_SDL_PollEvent])(NULL) == 7);
+    ((void(*)(void))table[PORT0R_SLOT_SDL_PumpEvents])();
+    assert(((int(*)(void *))table[PORT0R_SLOT_SDL_WaitEvent])(NULL) == 8);
+    assert(((int(*)(void *,int))table[PORT0R_SLOT_SDL_WaitEventTimeout])(NULL, 23) == 23);
+    assert(gateCalls == 4 && pollCalls == 1 && pumpCalls == 1 && waitCalls == 2);
+    puts("PASS: every SDL event-loop entry gates on foreground and preserves native arguments/results");
     void *window = ((void *(*)(const char *,int,int,int,int,uint32_t))table[PORT0R_SLOT_SDL_CreateWindow])("test",0,0,1280,720,0x3001);
     assert(window == (void *)0x1234 && seenFlags == 0x2000);
     assert(((uint32_t(*)(void *))table[PORT0R_SLOT_SDL_GetWindowFlags])(window) == 0x2000);
@@ -44,3 +60,43 @@ print(result.stdout)
 if result.returncode:
     print(result.stderr[-6000:])
     raise SystemExit(result.returncode)
+
+background = (overrides / 'AppKit_Background.m').read_text()
+state_code = background[background.index('static _Atomic bool gameActive'):background.index('static BOOL IsGameGPUCaller')]
+wait_code = background[background.index('__attribute__((visibility("default"))) void Port0rWaitForForeground'):background.index('static void GameCommit')]
+lifecycle_test = Path('build/lifecycle_smoke.m')
+lifecycle_test.write_text('#import <Foundation/Foundation.h>\n#import <objc/runtime.h>\n#include <stdatomic.h>\n#include <stdbool.h>\n#include <assert.h>\n' + state_code + wait_code + r"""
+int main(void) { @autoreleasepool {
+    foregroundCondition = [NSCondition new];
+    SetGameActive(NO);
+    __block BOOL entered = NO, finished = NO;
+    NSCondition *testCondition = [NSCondition new];
+    NSThread *worker = [[NSThread alloc] initWithBlock:^{ @autoreleasepool {
+        [testCondition lock]; entered = YES; [testCondition broadcast]; [testCondition unlock];
+        Port0rWaitForForeground();
+        [testCondition lock]; finished = YES; [testCondition broadcast]; [testCondition unlock];
+    }}];
+    [worker start];
+    [testCondition lock];
+    NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:5];
+    while (!entered) assert([testCondition waitUntilDate:deadline]);
+    assert(!finished);
+    [testCondition unlock];
+    SetGameActive(YES);
+    [testCondition lock];
+    while (!finished) assert([testCondition waitUntilDate:deadline]);
+    [testCondition unlock];
+    SetGameActive(NO);
+    CFAbsoluteTime start = CFAbsoluteTimeGetCurrent();
+    CFRunLoopTimerRef timer = CFRunLoopTimerCreateWithHandler(NULL, start + 0.05, 0, 0, 0,
+        ^(CFRunLoopTimerRef t) { SetGameActive(YES); });
+    CFRunLoopAddTimer(CFRunLoopGetCurrent(), timer, kCFRunLoopDefaultMode);
+    Port0rWaitForForeground();
+    assert(atomic_load(&gameActive) && CFAbsoluteTimeGetCurrent() - start >= 0.04);
+    CFRunLoopTimerInvalidate(timer); CFRelease(timer);
+    puts("PASS: actual background gate blocks worker and main game loops, preserves lifecycle run-loop delivery and resumes");
+} return 0; }
+""")
+subprocess.run(['xcrun','--sdk','macosx','clang','-fobjc-arc','-fsanitize=address',
+                '-framework','Foundation',str(lifecycle_test),'-o','build/lifecycle_smoke'],check=True)
+subprocess.run(['build/lifecycle_smoke'],check=True,timeout=15)
