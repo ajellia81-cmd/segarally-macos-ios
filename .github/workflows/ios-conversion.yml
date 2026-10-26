@@ -56,6 +56,10 @@ jobs:
         run: |
           mkdir -p build
           echo 'Conversion step result: ${{ steps.convert.outcome }}' | tee build/summary.txt
+          if [ -f build/conversion.log ]; then
+            echo '--- Conversion failure details (last 100 lines) ---'
+            tail -n 100 build/conversion.log
+          fi
           if [ -f build/SegaRally.app/Info.plist ] && [ -f build/SegaRally.app/port0r ]; then
             /usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' build/SegaRally.app/Info.plist | tee -a build/summary.txt
             file build/SegaRally.app/port0r | tee -a build/summary.txt
