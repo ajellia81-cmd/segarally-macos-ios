@@ -1,4 +1,4 @@
-# Port0r Rally: experimental iOS / LiveContainer conversion
+# Sega Rally Championship: experimental iOS / LiveContainer conversion
 
 GitHub Actions converts the official **mac-v0.1.0 ARM64** engine with
 [`macos-on-ios-public`](https://github.com/zorrobyte/macos-on-ios-public), pinned
@@ -34,6 +34,33 @@ manually. The old empty-Downloads cleanup has been removed.
 If the guest Documents directory is not visible in Files, open it through
 LiveContainer. File sharing keys alone do not guarantee guest visibility.
 Diagnostic output is saved to **Documents/Port0r-diagnostics/launch.log**.
+
+Both native `~/Downloads` and `~/Library/Application Support/Port0r` are now
+aliased to their Documents counterparts. This also covers libc++ filesystem
+enumeration/copy operations which bypass libc path shims. Existing native
+directories are merged without replacing destination files, then kept as
+`.before-ios-paths` backups. A failed alias operation restores the native folder.
+The build checks a real C++ file copy through these aliases using placeholder
+text, never ROM data. Actual on-device ROM recognition still needs verification.
+
+The app uses the supplied Sega Rally logo/car image as its iOS icon and the
+display name **Sega Rally Championship**. The bundle ID is unchanged so an
+in-place LiveContainer update can retain the guest data.
+
+## Touch controls and background behavior
+
+Touch controls appear only when no GameController gamepad is connected. They
+provide steering/menu directions, gas, brake, gears, view, coin, start and menu
+through the original keyboard mappings. They support simultaneous presses;
+connecting a gamepad, cancelling a touch or leaving the app releases held inputs.
+This version uses digital steering/throttle, not analog touch controls. UI
+placement, actual input delivery and hot-plug visibility require a device test.
+
+MoltenVK command submission pauses when the app loses foreground activity,
+then resumes on activation. This targets the observed background
+`VK_ERROR_DEVICE_LOST` error; it does not permit GPU work in the background.
+The runtime hook is scoped to MoltenVK callers and leaves host/UIKit rendering
+alone. Background/foreground recovery needs an on-device test.
 
 ## Display, input and sound
 
@@ -78,7 +105,7 @@ test; build-time tests do not establish those outcomes.
   enabled; Mac IOKit/HID backends are disabled. Pair a controller with iOS before
   launch. Original mappings: A start, View/Select coin, Menu pause/settings,
   RT/LT gas/brake, left stick steer, RB/LB gears, Y view. Input and rumble are
-  unverified. A touch-only driving overlay has not been implemented.
+  unverified. A digital touch driving overlay is supplied when no pad is connected.
 - Original MoltenVK renderer, engine library, audio code and graphical settings
   are retained. Compatibility stubs remain and may prevent launch, rendering,
   audio or controller functionality. Diagnostic artifacts contain generated

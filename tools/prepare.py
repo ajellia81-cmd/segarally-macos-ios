@@ -44,8 +44,9 @@ s = s.replace('void CGDisplayModeRelease(CGDisplayModeRef m) {}',
 s = s.replace('CGDisplayModeRetain(CGDisplayModeRef m) { return m; }',
               'CGDisplayModeRetain(CGDisplayModeRef m) { return m ? (CGDisplayModeRef)CFRetain(m) : NULL; }')
 p.write_text(s)
-for override in (Path(__file__).parent / 'overrides').glob('*.m'):
-    shutil.copyfile(override, root / 'shim/overrides' / override.name)
+for override in (Path(__file__).parent / 'overrides').glob('*'):
+    if override.suffix in {'.m', '.h'}:
+        shutil.copyfile(override, root / 'shim/overrides' / override.name)
 # The bundled SDL is Mac SDL 2.30.3. Generate its Mac API-table slots rather
 # than using iOS slot numbering (the platform-specific entries differ).
 procs = Path(__file__).parent / 'vendor/SDL_dynapi_procs.h'
@@ -74,6 +75,23 @@ __attribute__((visibility("default"))) void Port0rCoinKey(BOOL down) {
     e.timestamp = NSProcessInfo.processInfo.systemUptime;
     ShimDispatch(e);
 }
+__attribute__((visibility("default"))) void Port0rTouchKey(unsigned short code, BOOL down) {
+    NSEvent *e = [NSEvent new];
+    e.type = down ? NSEventTypeKeyDown : NSEventTypeKeyUp;
+    e.keyCode = code;
+    switch (code) {
+        case 23: e.characters = @"5"; break;
+        case 36: e.characters = @"\\r"; break;
+        case 53: e.characters = @"\\x1b"; break;
+        case 14: e.characters = @"e"; break;
+        case 12: e.characters = @"q"; break;
+        case 9: e.characters = @"v"; break;
+        default: e.characters = @""; break;
+    }
+    e.charactersIgnoringModifiers = e.characters;
+    e.timestamp = NSProcessInfo.processInfo.systemUptime;
+    ShimDispatch(e);
+}
 '''
 p.write_text(s)
 # AVAudioSession is used only to activate the native output route. Queue PCM
@@ -89,6 +107,7 @@ target.write_text('''#import <UIKit/UIKit.h>
 #include <unistd.h>
 #include <sys/stat.h>
 #import <mach-o/dyld.h>
+extern void Port0rPreparePaths(void);
 
 static NSUncaughtExceptionHandler *previousExceptionHandler;
 static void Port0rException(NSException *exception) {
@@ -147,17 +166,7 @@ __attribute__((constructor)) static void Port0rContainerSetup(void) {
         [fm createDirectoryAtPath:[NSHomeDirectory() stringByAppendingPathComponent:sub]
             withIntermediateDirectories:YES attributes:nil error:nil];
     }
-    // Foundation and native C/C++ scanners must see the same Downloads folder.
-    // Preserve any pre-existing home Downloads directory or symlink.
-    NSString *nativeDownloads = [NSHomeDirectory() stringByAppendingPathComponent:@"Downloads"];
-    NSString *visibleDownloads = [NSHomeDirectory() stringByAppendingPathComponent:@"Documents/Downloads"];
-    if (![fm fileExistsAtPath:nativeDownloads] &&
-        ![fm destinationOfSymbolicLinkAtPath:nativeDownloads error:nil]) {
-        NSError *error = nil;
-        if (![fm createSymbolicLinkAtPath:nativeDownloads withDestinationPath:visibleDownloads error:&error])
-            NSLog(@"PORT0R Downloads alias could not be created: %@", error);
-    }
-    NSLog(@"PORT0R original Downloads import folder: %@", visibleDownloads);
+    Port0rPreparePaths();
 }
 ''')
 # NSLog normally goes to the device's unified log, which Cloud cannot read.

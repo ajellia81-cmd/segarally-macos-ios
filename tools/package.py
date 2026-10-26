@@ -70,15 +70,15 @@ def run(*args):
 
 p = app / 'Info.plist'
 info = plistlib.loads(p.read_bytes())
-info.update(CFBundleName='Port0r Rally', CFBundleDisplayName='Port0r Rally',
+info.update(CFBundleName='Sega Rally Championship', CFBundleDisplayName='Sega Rally Championship',
             CADisableMinimumFrameDurationOnPhone=True,
             UISupportedInterfaceOrientations=['UIInterfaceOrientationLandscapeLeft', 'UIInterfaceOrientationLandscapeRight'],
             UIFileSharingEnabled=True, LSSupportsOpeningDocumentsInPlace=True,
             GCSupportedGameControllers=[{'ProfileName': 'ExtendedGamepad'}],
             GCSupportsControllerUserInteraction=True)
 info.pop('LSMinimumSystemVersion', None)
-# Reuse Port0r's official artwork; iOS cannot use the Mac .icns directly.
-icon = app / 'Mac/Contents/Resources/AppIcon.icns'
+# User-supplied square artwork. Preserve the complete logo and both cars.
+icon = Path('assets/SegaRallyIcon.jpg').resolve()
 master = Path('build/Port0r-icon.png').resolve()
 run('sips', '-s', 'format', 'png', str(icon), '--out', str(master))
 for name, pixels in [('AppIcon60x60@2x', 120), ('AppIcon60x60@3x', 180),
@@ -106,7 +106,7 @@ report = {'device_launch_verified': False, 'original_resolution_percentages': 'u
           'native_resolution': 'runtime UIScreen.nativeBounds; no guessed iPhone dimensions',
           'refresh_rate': 'runtime maximumFramesPerSecond; 120 Hz capability only',
           'macho': [], 'removed_game_assets': 'Resources/srallyc cockpit packs',
-          'icon': 'official release AppIcon.icns converted to iOS PNG sizes',
+          'icon': 'user supplied Sega Rally Championship artwork resized to iOS PNG sizes',
           'signing': 'ad-hoc only, no Apple identity/profile; LiveContainer must re-sign'}
 for m in machos:
     zero_fill_fixes = normalize_zero_fill(m)

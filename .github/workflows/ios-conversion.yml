@@ -65,6 +65,8 @@ jobs:
         run: python3 tools/smoke_audio.py
       - name: Verify iOS fullscreen policy for the original Mac SDL ABI
         run: python3 tools/smoke_sdl_policy.py
+      - name: Verify C++ ROM import paths and touch input release
+        run: python3 tools/smoke_paths_touch.py
       - name: Preserve component license notices
         run: |
           curl -fL https://raw.githubusercontent.com/jacquesdupontd/port0r/main/THIRD-PARTY-NOTICES.txt -o build/SegaRally.app/THIRD-PARTY-NOTICES.txt
