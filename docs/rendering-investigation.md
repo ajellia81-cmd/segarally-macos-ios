@@ -34,3 +34,37 @@ Mac baseline is still unavailable; no matching original Port0r issue was found
 in the public issue search. Neither fact proves the emulator is correct.
 
 Reference: https://github.com/KhronosGroup/MoltenVK/blob/v1.4.2/MoltenVK/MoltenVK/GPUObjects/MVKDevice.mm
+
+## Device result and texture-update comparison
+
+The user reports that truthful GPU-family reporting did not fix the flicker.
+It remains a correctness fix, but it is not a demonstrated flicker fix. The
+user identifies repeating building-window textures as the main affected area.
+
+The pinned Port0r executable contains existing `m2.regionsWaitIdle` and
+`m2.sheetWaitIdle` controls. Disassembly of both guarded paths, plus the Mach-O
+indirect-symbol table, confirms that they call `vkDeviceWaitIdle` around texture
+update work. Both original defaults are zero. The next comparison build changes
+only those two default arguments to one; explicit config overrides still win.
+The shaders, texture filtering, depth settings and emulator are unchanged.
+Upload-time waits may cost performance; both the flicker and performance effects
+need a device comparison. This is not unconditional synchronization of every
+Metal command buffer.
+
+## Emulator-side research
+
+MAME 0.289's Model 2 renderer documents incomplete understanding of the original
+Z-sort hardware and fixed-point depth ordering. Sega Rally's Model 2A geometry
+uses a high-level emulation path, and the upstream driver marks `srallyc`
+`MACHINE_NOT_WORKING`. These are evidence that the emulator is not a perfect
+hardware reference, not evidence that this particular flicker is an emulator bug.
+
+No exact building-window-flicker report was identified in the sources/issues
+checked. The word `window` in the renderer's Z-sort notes means a render window
+or viewport, not the windows of a building. Port0r also uses a custom native
+Vulkan renderer, so upstream MAME's CPU-renderer behavior alone cannot establish
+what the original Port0r Mac build does in this scene.
+
+References:
+- https://github.com/mamedev/mame/blob/mame0289/src/mame/sega/model2_v.cpp
+- https://github.com/mamedev/mame/blob/mame0289/src/mame/sega/model2.cpp

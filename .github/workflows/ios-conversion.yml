@@ -73,6 +73,8 @@ jobs:
         run: python3 tools/smoke_native_guide.py
       - name: Verify truthful iOS GPU capabilities
         run: python3 tools/smoke_gpu_capabilities.py
+      - name: Verify native texture-update synchronization
+        run: python3 tools/smoke_texture_sync.py
       - name: Preserve component license notices
         run: |
           curl -fL https://raw.githubusercontent.com/jacquesdupontd/port0r/main/THIRD-PARTY-NOTICES.txt -o build/SegaRally.app/THIRD-PARTY-NOTICES.txt
@@ -95,6 +97,7 @@ jobs:
             build/validation.json
             build/native-guide-validation.json
             build/gpu-capabilities-validation.txt
+            build/texture-sync-validation.json
             build/validation.log
             build/conversion.log
             build/shims/*.m
