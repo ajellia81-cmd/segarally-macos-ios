@@ -1,0 +1,79 @@
+name: iOS conversion feasibility and unsigned IPA
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  convert:
+    runs-on: macos-15
+    timeout-minutes: 60
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch Port0r official release
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json,os,urllib.request,shutil
+          api='https://api.github.com/repos/jacquesdupontd/port0r/releases/tags/mac-v0.1.0'
+          headers={'Authorization':'Bearer '+os.environ['GH_TOKEN'],'User-Agent':'segarally-ios-probe','Accept':'application/vnd.github+json'}
+          with urllib.request.urlopen(urllib.request.Request(api,headers=headers)) as r: release=json.load(r)
+          assets=[a for a in release['assets'] if a['name']=='Port0r-SegaRally-Mac-v0.1.0.tar.gz']
+          if len(assets)!=1: raise SystemExit('Expected official release asset unavailable')
+          with urllib.request.urlopen(urllib.request.Request(assets[0]['browser_download_url'],headers=headers)) as r,open('port0r.tar.gz','wb') as f: shutil.copyfileobj(r,f)
+          PY
+          mkdir extracted
+          tar -xzf port0r.tar.gz -C extracted
+          test -d 'extracted/Port0r Rally.app'
+      - name: Fetch compatibility conversion source
+        run: git clone --depth 1 https://github.com/zorrobyte/macos-on-ios-public.git compatibility
+      - name: Check Xcode and SDK availability
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-path
+          python3 compatibility/tools/convert_app.py --help
+      - name: Try conversion without Apple developer credentials
+        id: convert
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -uo pipefail
+          mkdir -p build
+          python3 compatibility/tools/convert_app.py 'extracted/Port0r Rally.app' build/SegaRally.app com.segarally.port0r.ios --profile /dev/null --identity - --team UNSIGNED > build/conversion.log 2>&1
+          result=$?
+          cat build/conversion.log
+          exit "$result"
+      - name: Inspect conversion outcome
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p build
+          echo 'Conversion step result: ${{ steps.convert.outcome }}' | tee build/summary.txt
+          if [ -f build/SegaRally.app/Info.plist ] && [ -f build/SegaRally.app/port0r ]; then
+            /usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' build/SegaRally.app/Info.plist | tee -a build/summary.txt
+            file build/SegaRally.app/port0r | tee -a build/summary.txt
+            mkdir -p build/Payload
+            cp -R build/SegaRally.app build/Payload/
+            (cd build && zip -qry SegaRally-experimental-UNSIGNED.ipa Payload)
+            echo 'Experimental unsigned IPA packaged; NOT verified to launch on iOS.' | tee -a build/summary.txt
+          else
+            echo 'No complete converted app; no IPA will be published.' | tee -a build/summary.txt
+          fi
+      - name: Upload diagnostic results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: segarally-ios-conversion-diagnostics
+          path: |
+            build/summary.txt
+            build/conversion.log
+            build/SegaRally-experimental-UNSIGNED.ipa
+          if-no-files-found: warn
+          retention-days: 7
