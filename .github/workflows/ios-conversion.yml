@@ -13,12 +13,31 @@ permissions:
 
 jobs:
   convert:
-    runs-on: macos-26
+    runs-on: macos-15-arm64
     timeout-minutes: 30
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v4
+      - name: Select installed Xcode with iOS 26 SDK
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import os, subprocess
+          candidates = []
+          for app in Path('/Applications').glob('Xcode*.app'):
+              developer = str(app / 'Contents/Developer')
+              result = subprocess.run(['xcrun', '--sdk', 'iphoneos', '--show-sdk-version'],
+                  env={**os.environ, 'DEVELOPER_DIR': developer}, capture_output=True, text=True)
+              if result.returncode == 0:
+                  version = tuple(int(p) for p in result.stdout.strip().split('.'))
+                  if version >= (26,): candidates.append((version, developer))
+          if not candidates: raise SystemExit('No installed Xcode with iOS 26 or later SDK')
+          version, developer = max(candidates)
+          with open(os.environ['GITHUB_ENV'], 'a') as f: f.write('DEVELOPER_DIR=' + developer + '\\n')
+          print('Selected', developer, 'iOS SDK', version)
+          PY
       - name: Fetch Port0r official release
         shell: bash
         run: |
