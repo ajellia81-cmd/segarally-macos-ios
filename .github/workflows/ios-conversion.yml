@@ -6,6 +6,7 @@ on:
     branches: [main]
     paths:
       - '.github/workflows/ios-conversion.yml'
+      - 'tools/**'
 
 permissions:
   contents: read
@@ -13,7 +14,7 @@ permissions:
 jobs:
   convert:
     runs-on: macos-26
-    timeout-minutes: 60
+    timeout-minutes: 30
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
@@ -36,6 +37,11 @@ jobs:
           test -d 'extracted/Port0r Rally.app'
       - name: Fetch compatibility conversion source
         run: git clone --depth 1 https://github.com/zorrobyte/macos-on-ios-public.git compatibility
+      - name: Pin converter and prepare ROM-free source
+        run: |
+          git -C compatibility checkout c2562a333d4de4c08da4ceb4a4f1485bddb84e04
+          echo '1e275f547a9f641b49488fd37368e918d45ae5fd4ce30326dd3688cf9899dec0  port0r.tar.gz' | shasum -a 256 -c -
+          python3 tools/prepare.py
       - name: Check Xcode and SDK availability
         shell: bash
         run: |
@@ -46,43 +52,33 @@ jobs:
           python3 compatibility/tools/convert_app.py --help
       - name: Try conversion without Apple developer credentials
         id: convert
-        continue-on-error: true
         shell: bash
         run: |
-          set -uo pipefail
+          set -euo pipefail
           mkdir -p build
-          python3 compatibility/tools/convert_app.py 'extracted/Port0r Rally.app' build/SegaRally.app com.segarally.port0r.ios --profile /dev/null --identity - --team UNSIGNED > build/conversion.log 2>&1
-          result=$?
-          cat build/conversion.log
-          exit "$result"
-      - name: Inspect conversion outcome
-        if: always()
-        shell: bash
+          python3 compatibility/tools/convert_app.py 'extracted/Port0r Rally.app' build/SegaRally.app com.segarally.port0r.ios --profile /dev/null --identity - --team UNSIGNED --no-metal-hud --redirect /Library/Application\ Support/Port0r=Documents/Port0r --redirect /Downloads=Documents/Downloads 2>&1 | tee build/conversion.log
+      - name: Preserve component license notices
         run: |
-          mkdir -p build
-          echo 'Conversion step result: ${{ steps.convert.outcome }}' | tee build/summary.txt
-          if [ -f build/conversion.log ]; then
-            echo '--- Conversion failure details (last 100 lines) ---'
-            tail -n 100 build/conversion.log
-          fi
-          if [ -f build/SegaRally.app/Info.plist ] && [ -f build/SegaRally.app/port0r ]; then
-            /usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' build/SegaRally.app/Info.plist | tee -a build/summary.txt
-            file build/SegaRally.app/port0r | tee -a build/summary.txt
-            mkdir -p build/Payload
-            cp -R build/SegaRally.app build/Payload/
-            (cd build && zip -qry SegaRally-experimental-UNSIGNED.ipa Payload)
-            echo 'Experimental unsigned IPA packaged; NOT verified to launch on iOS.' | tee -a build/summary.txt
-          else
-            echo 'No complete converted app; no IPA will be published.' | tee -a build/summary.txt
-          fi
+          curl -fL https://raw.githubusercontent.com/jacquesdupontd/port0r/main/THIRD-PARTY-NOTICES.txt -o build/SegaRally.app/THIRD-PARTY-NOTICES.txt
+          cp compatibility/LICENSE build/SegaRally.app/COMPATIBILITY-LICENSE.txt
+      - name: Validate and package LiveContainer IPA
+        run: python3 tools/package.py | tee build/validation.log
+      - name: Upload validated IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: SegaRally-LiveContainer-UNSIGNED
+          path: build/SegaRally-LiveContainer-UNSIGNED.ipa
+          if-no-files-found: error
+          retention-days: 14
       - name: Upload diagnostic results
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: segarally-ios-conversion-diagnostics
           path: |
-            build/summary.txt
+            build/validation.json
+            build/validation.log
             build/conversion.log
-            build/SegaRally-experimental-UNSIGNED.ipa
+            build/shims/*.m
           if-no-files-found: warn
           retention-days: 7
