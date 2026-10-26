@@ -88,11 +88,14 @@ static void Port0rException(NSException *exception) {
 
 __attribute__((constructor)) static void Port0rContainerSetup(void) {
     NSLog(@"PORT0R container setup constructor reached");
+    // Remove only an empty legacy directory; never delete user files.
+    NSString *legacyDownloads = [NSHomeDirectory() stringByAppendingPathComponent:@"Documents/Downloads"];
+    rmdir(legacyDownloads.fileSystemRepresentation);
     setenv("SDL_JOYSTICK_IOKIT", "0", 1);
     setenv("SDL_JOYSTICK_HIDAPI", "0", 1);
     setenv("SDL_JOYSTICK_MFI", "1", 1);
     NSFileManager *fm = NSFileManager.defaultManager;
-    for (NSString *sub in @[@"Documents/Downloads", @"Documents/Port0r/srallyc/roms"]) {
+    for (NSString *sub in @[@"Documents/Port0r/srallyc/roms"]) {
         [fm createDirectoryAtPath:[NSHomeDirectory() stringByAppendingPathComponent:sub]
             withIntermediateDirectories:YES attributes:nil error:nil];
     }

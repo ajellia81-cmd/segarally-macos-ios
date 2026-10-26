@@ -56,7 +56,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p build
-          python3 compatibility/tools/convert_app.py 'extracted/Port0r Rally.app' build/SegaRally.app com.segarally.port0r.ios --profile /dev/null --identity - --team UNSIGNED --no-metal-hud --redirect /Library/Application\ Support/Port0r=Documents/Port0r --redirect /Downloads=Documents/Downloads 2>&1 | tee build/conversion.log
+          python3 compatibility/tools/convert_app.py 'extracted/Port0r Rally.app' build/SegaRally.app com.segarally.port0r.ios --profile /dev/null --identity - --team UNSIGNED --no-metal-hud --redirect /Library/Application\ Support/Port0r=Documents/Port0r 2>&1 | tee build/conversion.log
       - name: Preserve component license notices
         run: |
           curl -fL https://raw.githubusercontent.com/jacquesdupontd/port0r/main/THIRD-PARTY-NOTICES.txt -o build/SegaRally.app/THIRD-PARTY-NOTICES.txt

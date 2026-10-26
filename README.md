@@ -18,8 +18,11 @@ must perform its normal signing/import process.
 A successful Actions run establishes conversion and package checks only.
 
 After launch creates the directories, put your legally obtained game files in
-the guest app's **Documents/Downloads** directory through LiveContainer's
-container/file management. Alternatively use **Documents/Port0r/srallyc/roms**.
+the guest app's **Documents/Port0r/srallyc/roms** directory through LiveContainer's
+container/file management. Keep the ZIP files compressed. The conversion no longer
+creates an additional Downloads folder or redirects the Mac Downloads path.
+An empty Documents/Downloads folder left by earlier builds is removed at startup;
+if it contains files, it is preserved to avoid deleting user data.
 The original engine expects `srallyc.zip` and `segabill.zip` for MAME 0.289.
 If the guest Documents directory is not visible in Files, open it through
 LiveContainer. File sharing keys alone do not guarantee guest visibility.
