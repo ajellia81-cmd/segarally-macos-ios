@@ -36,6 +36,7 @@ static int engineStarts;
     void (^_stopped)(CHHapticEngineStoppedReason);
     void (^_reset)(void);
 }
+@property BOOL autoShutdownEnabled;
 @property(nonatomic,copy) void (^stoppedHandler)(CHHapticEngineStoppedReason);
 @property(nonatomic,copy) void (^resetHandler)(void);
 @end
@@ -60,7 +61,19 @@ static int engineStarts;
 @implementation SDL_RumbleMotor
 @synthesize engine = _testEngine;
 @synthesize player = _testPlayer;
-- (int)setIntensity:(float)intensity { originalCalls++; lastIntensity = intensity; return 0; }
+- (int)setIntensity:(float)intensity {
+    originalCalls++; lastIntensity = intensity;
+    if (intensity == 0) {
+        if (self.player && self.active) [self.player stopAtTime:0 error:NULL];
+        self.active = false;
+    } else if (self.player) {
+        CHHapticDynamicParameter *value = [[CHHapticDynamicParameter alloc]
+            initWithParameterID:CHHapticDynamicParameterIDHapticIntensityControl value:intensity relativeTime:0];
+        [self.player sendParameters:@[value] atTime:0 error:NULL];
+        if (!self.active) { [self.player startAtTime:0 error:NULL]; self.active = true; }
+    }
+    return 0;
+}
 - (void)cleanup { self.player = nil; self.engine = nil; }
 @end
 ''' + '#import "' + str(overrides / 'AppKit_Haptics.m') + '"\n' + r'''
@@ -86,12 +99,14 @@ int main(void) { @autoreleasepool {
     assert(originalIntensity != NULL);
     motor = [SDL_RumbleMotor new]; motor.engine = [TestEngine new];
     Port0rWarmControllerHaptics((void *)0x1234, Rumble, Rumble, Supported, Supported);
-    assert(playerCreations == 1 && starts == 1 && stops == 1);
-    assert(originalCalls == 4 && lastIntensity == 0 && motor.player != nil);
+    assert(playerCreations == 1 && starts == 1 && stops == 0 && motor.active);
+    assert(originalCalls == 0 && lastIntensity == 0 && motor.player != nil);
+    assert(!motor.engine.autoShutdownEnabled);
     Port0rWarmControllerHaptics((void *)0x1234, Rumble, Rumble, Supported, Supported);
     assert(playerCreations == 1 && starts == 1); // same player reused
     [motor setIntensity:0.75f];
-    assert(lastIntensity == 0.75f && !warmingMotors); // real vibration preserved
+    assert(lastIntensity == 0.75f && !warmingMotors && starts == 1 && motor.active);
+    assert(fabsf(((TestPlayer *)motor.player).testIntensity - 0.75f) < 0.00001f); // real vibration preserved
     int calls = originalCalls;
     Port0rWarmControllerHaptics((void *)0x1234, Rumble, Rumble, Unsupported, Unsupported);
     assert(originalCalls == calls);
@@ -103,12 +118,22 @@ int main(void) { @autoreleasepool {
     [motor setIntensity:0.5f]; assert(lastIntensity == 0 && engineStarts == 0);
     ResumeMotors();
     assert(engineStarts == 1 && motor.engine == sameEngine && motor.player != nil);
-    assert(playerCreations == 2 && starts == 2 && stops == 2);
+    assert(playerCreations == 2 && starts == 2 && stops == 0);
     [motor setIntensity:0.5f]; assert(lastIntensity == 0.5f);
     motor.engine.resetHandler();
     assert(motor.player == nil);
     [motor setIntensity:0.25f];
     assert(engineStarts == 2 && playerCreations == 3 && lastIntensity == 0.25f);
+    calls = originalCalls;
+    [motor setIntensity:0];
+    assert(originalCalls == calls && motor.active && ((TestPlayer *)motor.player).testIntensity == 0);
+    assert(starts == 3 && stops == 0); // silence stays ready; no stop/start per burst
+    SuspendMotors();
+    assert(!hapticsForeground && !motor.active && motor.player == nil && stops == 1 && motor.engine.autoShutdownEnabled);
+    ResumeMotors();
+    assert(hapticsForeground && motor.active && starts == 4 && engineStarts == 3 && !motor.engine.autoShutdownEnabled);
+    [motor setIntensity:0.33f];
+    assert(starts == 4 && fabsf(((TestPlayer *)motor.player).testIntensity - 0.33f) < 0.00001f);
     [motor cleanup];
     assert(motor.engine == nil && motor.player == nil && liveMotors.count == 0);
     sameEngine.stoppedHandler(CHHapticEngineStoppedReasonApplicationSuspended);
@@ -116,6 +141,7 @@ int main(void) { @autoreleasepool {
     assert(motor.engine == nil && motor.player == nil && liveMotors.count == 0);
     motor = [SDL_RumbleMotor new]; motor.engine = [TestEngine new];
     assert(PrepareSilentPlayer(motor));
+    motor.active = false; // exercise fallback if an external stop leaves a retained player
     originalIntensity = (IMP)SimulatedFirstStart;
     assert([motor setIntensity:0.6f] == 0);
     assert(fabsf(((TestPlayer *)motor.player).testIntensity - 0.6f) < 0.00001f && realStarts == 1);
@@ -123,10 +149,10 @@ int main(void) { @autoreleasepool {
     assert(fabsf(((TestPlayer *)motor.player).testIntensity - 0.8f) < 0.00001f && realStarts == 1);
     assert([motor setIntensity:0] == 0);
     assert([motor setIntensity:0.4f] == 0);
-    assert(fabsf(((TestPlayer *)motor.player).testIntensity - 0.4f) < 0.00001f && realStarts == 2);
+    assert(fabsf(((TestPlayer *)motor.player).testIntensity - 0.4f) < 0.00001f && realStarts == 1);
     puts("PASS: first actual haptic request restores requested intensity after start, with no extra event; later bursts preserved");
     puts("PASS: stopped/reset engines retained, foreground engine/player recovery and normal vibration restored");
-    puts("PASS: actual SDL motor warm-up creates and retains a silent player, reuses it and preserves real intensity; unsupported motors skipped");
+    puts("PASS: actual SDL silent player stays active across zero requests; first burst requires no restart; background stops and foreground recreates it");
 } return 0; }
 ''')
 subprocess.run(['xcrun', '--sdk', 'macosx', 'clang', '-fobjc-arc', '-fsanitize=address',
@@ -169,6 +195,12 @@ int main(void) { @autoreleasepool {
     SelectController *pad = [SelectController new];
     pad.vendorName = @"Backbone"; pad.productCategory = @"Pro";
     pad.extendedGamepad = profile; pad.physicalInputProfile = profile;
+    assert(CoinOnlySelection(nil) && CoinOnlySelection(@"# empty defaults"));
+    assert(CoinOnlySelection(@"pad.coin=SELECT\\npad.menu=START"));
+    assert(CoinOnlySelection(@"pad.coin SELECT\\npad.menu START"));
+    assert(!CoinOnlySelection(@"pad.coin=GUIDE"));
+    assert(!CoinOnlySelection(@"pad.coin=SELECT\\npad.start=SELECT"));
+    assert(!CoinOnlySelection(@"pad.coin"));
     testControllers = @[pad];
     assert(!Port0rBackboneSelect("Backbone Pro", 2));
     button.isPressed = YES;

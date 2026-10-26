@@ -6,6 +6,36 @@
 
 // Never own pressedChangedHandler: SDL installs/replaces these during device open.
 // Read GameController's current state at the native SDL_GetButton polling boundary.
+// Use the proven keyboard Coin path only when Select belongs solely to Coin.
+static BOOL CoinOnlySelection(NSString *text) {
+    NSMutableDictionary<NSString *, NSString *> *bindings = [NSMutableDictionary new];
+    for (NSString *raw in [text componentsSeparatedByCharactersInSet:NSCharacterSet.newlineCharacterSet]) {
+        NSString *line = [raw stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet];
+        if (![line hasPrefix:@"pad."]) continue;
+        NSRange separator = [line rangeOfString:@"="];
+        if (separator.location == NSNotFound) separator = [line rangeOfCharacterFromSet:NSCharacterSet.whitespaceCharacterSet];
+        if (separator.location == NSNotFound) return NO;
+        NSString *key = [[line substringToIndex:separator.location] stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet];
+        NSString *value = [[line substringFromIndex:NSMaxRange(separator)] stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet];
+        if (!value.length) return NO;
+        bindings[key] = value;
+    }
+    if (bindings[@"pad.coin"] && ![bindings[@"pad.coin"] isEqualToString:@"SELECT"]) return NO;
+    for (NSString *key in bindings)
+        if (![key isEqualToString:@"pad.coin"] && [bindings[key] isEqualToString:@"SELECT"]) return NO;
+    return YES;
+}
+BOOL Port0rSelectCoinFallbackR3(void) {
+    for (NSString *base in @[@"Documents/Port0r/srallyc", @"Library/Application Support/Port0r/srallyc"]) {
+        NSString *path = [[NSHomeDirectory() stringByAppendingPathComponent:base] stringByAppendingPathComponent:@"tcvr-settings-v1.txt"];
+        if (![NSFileManager.defaultManager fileExistsAtPath:path]) continue;
+        NSString *text = [NSString stringWithContentsOfFile:path encoding:NSUTF8StringEncoding error:NULL];
+        return text && CoinOnlySelection(text);
+    }
+    return YES; // original defaults: only pad.coin uses SELECT
+}
+extern void Port0rReleaseSelectCoinR3(void);
+
 static BOOL IsBackbone(GCController *controller) {
     NSString *identity = [NSString stringWithFormat:@"%@ %@", controller.vendorName, controller.productCategory];
     return [[identity lowercaseString] containsString:@"backbone"];
@@ -46,6 +76,8 @@ __attribute__((constructor)) static void BackboneInit(void) {
     NSNotificationCenter *nc = NSNotificationCenter.defaultCenter;
     for (NSString *notification in @[GCControllerDidConnectNotification, UIApplicationDidBecomeActiveNotification])
         [nc addObserverForName:notification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n) { ConfigureBackbones(); }];
+    for (NSString *notification in @[GCControllerDidDisconnectNotification, UIApplicationWillResignActiveNotification])
+        [nc addObserverForName:notification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n) { Port0rReleaseSelectCoinR3(); }];
     dispatch_async(dispatch_get_main_queue(), ^{ ConfigureBackbones(); });
 }
 #endif

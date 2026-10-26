@@ -6,9 +6,14 @@ overrides = Path('compatibility/shim/overrides').resolve()
 test = Path('build/sdl_policy_smoke.m')
 test.write_text('#define PORT0R_POLICY_TEST 1\n#import "' + str(overrides / 'AppKit_SDLPolicy.m') + '"\n' + r'''
 #include <assert.h>
+static BOOL allowCoinFallback;
+static int coinDowns, coinUps;
+BOOL Port0rSelectCoinFallbackR3(void) { return allowCoinFallback; }
+void Port0rCoinKey(BOOL down) { if (down) coinDowns++; else coinUps++; }
+static int deviceCount = 2;
 static BOOL backPressed;
 BOOL Port0rBackboneSelect(const char *name, int sdlDevices) { return backPressed && name && !strcmp(name, "Backbone Pro"); }
-static int NativeDevices(void) { return 2; }
+static int NativeDevices(void) { return deviceCount; }
 static uint8_t nativeButton;
 static uint8_t NativeButton(void *controller, int button) { return nativeButton; }
 static const char *NativeName(void *controller) { return controller == (void *)1 ? "Backbone Pro" : "Other pad"; }
@@ -54,6 +59,21 @@ int main(void) { @autoreleasepool {
     assert(readButton((void *)1, 4) == 1); // no second keyboard coin
     assert(readButton((void *)2, 5) == 1); // native inputs preserved
     nativeButton = 0; backPressed = NO;
+    deviceCount = 1; allowCoinFallback = YES; backPressed = YES;
+    assert(readButton((void *)1, 4) == 0 && coinDowns == 1 && coinUps == 0);
+    assert(readButton((void *)1, 4) == 0 && coinDowns == 1); // held: no duplicate injection
+    backPressed = NO;
+    assert(readButton((void *)1, 4) == 0 && coinUps == 1);
+    nativeButton = 1;
+    assert(readButton((void *)1, 4) == 0 && coinDowns == 2); // native BACK masked to avoid duplicate Coin
+    assert(readButton((void *)1, 5) == 1); // Guide untouched
+    Port0rReleaseSelectCoinR3();
+    assert(coinUps == 2);
+    allowCoinFallback = NO;
+    assert(readButton((void *)1, 4) == 1 && coinDowns == 2); // other assignments use native path
+    nativeButton = 0; backPressed = NO; readButton((void *)1, 4);
+    deviceCount = 2;
+    puts("PASS: sole Select-Coin assignment produces one keyboard down/up, masks duplicate native BACK and releases on lifecycle change");
     puts("PASS: Select press/release merged into native SDL BACK; Guide/other pads preserved and no duplicate coin injection");
     assert(((int(*)(void *))table[PORT0R_SLOT_SDL_PollEvent])(NULL) == 7);
     ((void(*)(void))table[PORT0R_SLOT_SDL_PumpEvents])();

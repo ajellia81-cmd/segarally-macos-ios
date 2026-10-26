@@ -37,6 +37,37 @@ static void PumpEvents(void) { Port0rWaitForForeground(); pumpEvents(); }
 static int WaitEvent(void *event) { Port0rWaitForForeground(); return waitEvent(event); }
 static int WaitEventTimeout(void *event, int timeout) { Port0rWaitForForeground(); return waitEventTimeout(event, timeout); }
 extern BOOL Port0rBackboneSelect(const char *name, int sdlDevices);
+extern BOOL Port0rSelectCoinFallbackR3(void);
+extern void Port0rCoinKey(BOOL down);
+static NSObject *coinStateLock;
+static BOOL coinHeld, physicalSelectHeld;
+static void EnsureCoinState(void) {
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{ coinStateLock = [NSObject new]; });
+}
+void Port0rReleaseSelectCoinR3(void) {
+    EnsureCoinState();
+    @synchronized (coinStateLock) {
+        if (coinHeld) Port0rCoinKey(NO);
+        coinHeld = physicalSelectHeld = NO;
+    }
+}
+static BOOL RouteSelectCoin(BOOL pressed) {
+    EnsureCoinState();
+    @synchronized (coinStateLock) {
+        if (pressed && !physicalSelectHeld) {
+            coinHeld = Port0rSelectCoinFallbackR3();
+            if (coinHeld) Port0rCoinKey(YES);
+            NSLog(@"PORT0R R3 Select Coin keyboard route=%d", coinHeld);
+        } else if (!pressed && physicalSelectHeld) {
+            if (coinHeld) Port0rCoinKey(NO);
+            coinHeld = NO;
+        }
+        physicalSelectHeld = pressed;
+        return coinHeld;
+    }
+}
+
 static int (*numJoysticks)(void);
 static _Atomic uint64_t selectReadsR2;
 uint64_t Port0rInputCallsR2(void) { return atomic_load(&selectReadsR2); }
@@ -55,6 +86,11 @@ static uint8_t ControllerButton(void *controller, int button) {
         NSLog(@"PORT0R R2 Select read=%llu SDL=%s devices=%d native=%u bridge=%d",
               (unsigned long long)reads + 1, name ?: "(null)", numJoysticks(), native, bridge);
     }
+    if (numJoysticks() == 1) {
+        // Suppress native BACK only while delivering its sole Coin assignment
+        // via keyboard 5. This prevents two Coin paths from firing together.
+        if (RouteSelectCoin(native || bridge)) return 0;
+    } else Port0rReleaseSelectCoinR3();
     return native || bridge ? 1 : 0;
 }
 #ifndef PORT0R_POLICY_TEST

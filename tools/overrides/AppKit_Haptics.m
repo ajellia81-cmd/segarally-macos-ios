@@ -63,6 +63,18 @@ static BOOL RestartMotor(id motor, BOOL force) {
         return PrepareSilentPlayer(motor);
     }
 }
+static void SuspendMotors(void) {
+    hapticsForeground = NO;
+    NSArray *motors;
+    @synchronized (liveMotors) { motors = liveMotors.allObjects; }
+    for (id motor in motors) @synchronized (motor) {
+        id<CHHapticPatternPlayer> player = MotorGet(motor, @"player");
+        if (player) [player stopAtTime:0 error:NULL];
+        CHHapticEngine *engine = MotorGet(motor, @"engine");
+        engine.autoShutdownEnabled = YES;
+        InvalidateMotor(motor, MotorGet(motor, @"engine"));
+    }
+}
 static void ResumeMotors(void) {
     hapticsForeground = YES;
     NSArray *motors;
@@ -91,6 +103,7 @@ static BOOL PrepareSilentPlayer(id motor) {
     if (((id (*)(id,SEL))objc_msgSend)(motor, playerSelector)) return YES;
     CHHapticEngine *engine = ((id (*)(id,SEL))objc_msgSend)(motor, engineSelector);
     if (!engine) return NO;
+    engine.autoShutdownEnabled = NO;
     TrackMotor(motor, engine);
     NSError *error = nil;
     CHHapticEventParameter *intensity = [[CHHapticEventParameter alloc]
@@ -102,31 +115,45 @@ static BOOL PrepareSilentPlayer(id motor) {
     if (!player || error) { NSLog(@"PORT0R haptic prepare failed: %@", error); return NO; }
     CHHapticDynamicParameter *silent = [[CHHapticDynamicParameter alloc]
         initWithParameterID:CHHapticDynamicParameterIDHapticIntensityControl value:0 relativeTime:0];
-    // Set intensity to zero before starting, then retain the stopped player for
-    // SDL. Its next real request sets its own requested intensity before start.
+    // Keep a zero-intensity player running while foregrounded. The first real
+    // event only changes intensity and never depends on restarting an idle player.
     if (![player sendParameters:@[silent] atTime:0 error:&error] ||
-        ![player startAtTime:0 error:&error] || ![player stopAtTime:0 error:&error]) {
+        ![player startAtTime:0 error:&error]) {
         [player cancelAndReturnError:nil];
         NSLog(@"PORT0R silent haptic prepare failed: %@", error); return NO;
     }
     ((void (*)(id,SEL,id))objc_msgSend)(motor, setPlayer, player);
+    if ([motor respondsToSelector:NSSelectorFromString(@"setActive:")])
+        ((void (*)(id,SEL,bool))objc_msgSend)(motor, NSSelectorFromString(@"setActive:"), true);
     return YES;
 }
 static int SetIntensity(id motor, SEL cmd, float intensity) {
     @synchronized (motor) {
         if (!warmingMotors && intensity > 0) {
             uint64_t event = atomic_fetch_add(&hapticRequestsR2, 1);
-            if (event < 4) NSLog(@"PORT0R R2 haptic request=%llu intensity=%.4f foreground=%d engine=%@ player=%@",
+            if (event < 4) NSLog(@"PORT0R R3 haptic request=%llu intensity=%.4f foreground=%d engine=%@ player=%@",
                 (unsigned long long)event + 1, intensity, hapticsForeground, MotorGet(motor, @"engine"), MotorGet(motor, @"player"));
         }
         if (warmingMotors) {
-            PrepareSilentPlayer(motor);
-            intensity = 0; // never send the warm-up's non-zero request to hardware
+            return PrepareSilentPlayer(motor) ? 0 : -1; // never pass the warm-up request to SDL
         } else if (intensity > 0 && hapticsForeground &&
                    [objc_getAssociatedObject(motor, &needsRestartKey) boolValue]) {
             if (!RestartMotor(motor, NO)) return -1;
         }
         if (!hapticsForeground) intensity = 0;
+        if (hapticsForeground && intensity == 0) {
+            id<CHHapticPatternPlayer> player = MotorGet(motor, @"player");
+            if (player) {
+                CHHapticDynamicParameter *silent = [[CHHapticDynamicParameter alloc]
+                    initWithParameterID:CHHapticDynamicParameterIDHapticIntensityControl value:0 relativeTime:0];
+                NSError *error = nil;
+                if ([player sendParameters:@[silent] atTime:0 error:&error]) return 0;
+                [player cancelAndReturnError:NULL];
+                InvalidateMotor(motor, MotorGet(motor, @"engine"));
+                NSLog(@"PORT0R R3 haptic silence failed: %@", error);
+                return -1;
+            }
+        }
         BOOL wasActive = [motor respondsToSelector:NSSelectorFromString(@"active")] &&
             ((bool (*)(id,SEL))objc_msgSend)(motor, NSSelectorFromString(@"active"));
         int status = ((int (*)(id,SEL,float))originalIntensity)(motor, cmd, intensity);
@@ -190,7 +217,7 @@ __attribute__((constructor)) static void InstallMotorWarmup(void) {
     for (NSString *name in @[UIApplicationWillResignActiveNotification, UIApplicationDidEnterBackgroundNotification,
                             UISceneWillDeactivateNotification, UISceneDidEnterBackgroundNotification])
         [nc addObserverForName:name object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n) {
-            hapticsForeground = NO;
+            SuspendMotors();
         }];
     for (NSString *name in @[UIApplicationDidBecomeActiveNotification, UISceneDidActivateNotification])
         [nc addObserverForName:name object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n) { ResumeMotors(); }];
