@@ -95,11 +95,18 @@ static uint8_t ControllerButton(void *controller, int button) {
 }
 static int (*nativeRumble)(void *, uint16_t, uint16_t, uint32_t);
 static _Atomic uint64_t realRumbleCalls;
+extern void Port0rPrepareControllerEnginesR7(void *, int (*)(void *, uint16_t, uint16_t, uint32_t));
+static void *(*nativeControllerOpen)(int);
+static void *ControllerOpen(int index) {
+    void *controller = nativeControllerOpen(index);
+    Port0rPrepareControllerEnginesR7(controller, nativeRumble);
+    return controller;
+}
 static int RealRumble(void *controller, uint16_t low, uint16_t high, uint32_t duration) {
     uint64_t call = atomic_fetch_add(&realRumbleCalls, 1) + 1;
     CFAbsoluteTime start = CFAbsoluteTimeGetCurrent();
     int result = nativeRumble(controller, low, high, duration);
-    if (call <= 8) NSLog(@"PORT0R R6 SDL real rumble=%llu low=%u high=%u duration=%ums status=%d nativeTime=%.2fms",
+    if (call <= 8) NSLog(@"PORT0R R7 SDL real rumble=%llu low=%u high=%u duration=%ums status=%d nativeTime=%.2fms",
         (unsigned long long)call, low, high, duration, result, (CFAbsoluteTimeGetCurrent() - start) * 1000);
     return result;
 }
@@ -112,7 +119,9 @@ static int ApplyPolicy(void *raw, uint32_t bytes) {
     ((void (*)(PolicyVersion *))table[PORT0R_SLOT_SDL_GetVersion])(&version);
     if (version.major != 2 || version.minor != 30 || version.patch != 3) return -1;
     nativeRumble = table[PORT0R_SLOT_SDL_GameControllerRumble];
-    if (!nativeRumble) return -1;
+    nativeControllerOpen = table[PORT0R_SLOT_SDL_GameControllerOpen];
+    if (!nativeRumble || !nativeControllerOpen) return -1;
+    table[PORT0R_SLOT_SDL_GameControllerOpen] = (void *)ControllerOpen;
     table[PORT0R_SLOT_SDL_GameControllerRumble] = (void *)RealRumble;
 
     numJoysticks = table[PORT0R_SLOT_SDL_NumJoysticks];

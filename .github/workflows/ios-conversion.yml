@@ -86,7 +86,7 @@ jobs:
         run: python3 tools/smoke_sdl_policy.py
       - name: Verify C++ ROM import paths and touch input release
         run: python3 tools/smoke_paths_touch.py
-      - name: Verify silent SDL haptic warm-up and foreground recovery
+      - name: Verify engine-only preparation and checked haptic playback
         run: python3 tools/smoke_controller_extras.py
       - name: Verify Guide in the original native Gamepad menu
         run: python3 tools/smoke_native_guide.py

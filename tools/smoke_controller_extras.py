@@ -1,6 +1,5 @@
-"""R6: verify real requests are not primed, suppressed or rewritten.
-
-Mock the original SDL motor, without starting physical CoreHaptics hardware.
+"""R7: engine-only preparation, exact initial strength and checked playback.
+Mock CoreHaptics hardware; keep the actual pattern construction and SDL hooks.
 """
 from pathlib import Path
 import subprocess
@@ -13,19 +12,56 @@ test.write_text(r'''
 #include <assert.h>
 #include <math.h>
 static int originalCalls, playerCreations, starts, stops, engineStarts;
-static int nativeStatus;
-static float lastIntensity, firstStartedIntensity = -1;
+static BOOL failCreate, failStart, failStop, failEngine;
+static float firstStartedIntensity = -1, createdIntensity;
+static NSError *Failure(void) { return [NSError errorWithDomain:@"TestHaptics" code:7 userInfo:nil]; }
+static void FindIntensity(id value) {
+    if ([value isKindOfClass:NSDictionary.class]) {
+        if ([value[@"ParameterID"] isEqual:@"HapticIntensity"]) createdIntensity = [value[@"ParameterValue"] floatValue];
+        for (id child in [value allValues]) FindIntensity(child);
+    } else if ([value isKindOfClass:NSArray.class]) {
+        for (id child in value) FindIntensity(child);
+    }
+}
 @interface TestPlayer : NSObject
 @property float intensity;
 @end
 @implementation TestPlayer
+- (BOOL)startAtTime:(NSTimeInterval)time error:(NSError **)error {
+    starts++;
+    if (failStart) { if (error) *error = Failure(); return NO; }
+    if (firstStartedIntensity < 0) firstStartedIntensity = self.intensity;
+    return YES;
+}
+- (BOOL)stopAtTime:(NSTimeInterval)time error:(NSError **)error {
+    stops++;
+    if (failStop) { if (error) *error = Failure(); return NO; }
+    return YES;
+}
+- (BOOL)sendParameters:(NSArray *)parameters atTime:(NSTimeInterval)time error:(NSError **)error {
+    assert(!"R7 must not send dynamic zero/intensity parameters"); return NO;
+}
 @end
 @interface TestEngine : NSObject
 @property(nonatomic,copy) void (^stoppedHandler)(CHHapticEngineStoppedReason);
 @property(nonatomic,copy) void (^resetHandler)(void);
+@property BOOL autoShutdownEnabled;
 @end
 @implementation TestEngine
-- (BOOL)startAndReturnError:(NSError **)error { engineStarts++; return YES; }
+- (BOOL)startAndReturnError:(NSError **)error {
+    engineStarts++;
+    if (failEngine) { if (error) *error = Failure(); return NO; }
+    return YES;
+}
+- (id)createPlayerWithPattern:(CHHapticPattern *)pattern error:(NSError **)error {
+    if (failCreate) { if (error) *error = Failure(); return nil; }
+    playerCreations++; createdIntensity = -1;
+    NSError *exportError = nil;
+    FindIntensity([pattern exportDictionaryAndReturnError:&exportError]);
+    assert(!exportError);
+    assert(createdIntensity >= 0 && createdIntensity <= 1);
+    TestPlayer *player = [TestPlayer new]; player.intensity = createdIntensity; return player;
+}
 @end
 @interface SDL_RumbleMotor : NSObject
 @property(nonatomic,strong) TestEngine *engine;
@@ -35,61 +71,62 @@ static float lastIntensity, firstStartedIntensity = -1;
 - (void)cleanup;
 @end
 @implementation SDL_RumbleMotor
-- (int)setIntensity:(float)value {
-    originalCalls++; lastIntensity = value;
-    if (nativeStatus) return nativeStatus;
-    if (value == 0) {
-        if (self.player && self.active) stops++;
-        self.active = false;
-        return 0;
-    }
-    // Model original SDL's lazy player creation on a real nonzero request.
-    if (!self.player) { self.player = [TestPlayer new]; playerCreations++; self.active = false; }
-    self.player.intensity = value;
-    if (!self.active) {
-        self.active = true;
-        if (starts++ == 0) firstStartedIntensity = value;
-    }
-    return 0;
-}
+- (int)setIntensity:(float)value { originalCalls++; return -99; }
 - (void)cleanup { self.player = nil; self.engine = nil; }
 @end
 ''' + '#import "' + str(overrides / 'AppKit_Haptics.m') + '"\n' + r'''
+static SDL_RumbleMotor *preparedMotor;
+static int primeCalls;
+static int Prime(void *controller, uint16_t low, uint16_t high, uint32_t duration) {
+    primeCalls++;
+    assert(controller == (void *)1);
+    assert((primeCalls == 1 && low == 1 && high == 1 && duration == 1) ||
+           (primeCalls == 2 && low == 0 && high == 0 && duration == 0));
+    return [preparedMotor setIntensity:(float)low / 65535];
+}
 int main(void) { @autoreleasepool {
     assert(originalIntensity != NULL && originalCalls == 0 && playerCreations == 0);
     SDL_RumbleMotor *motor = [SDL_RumbleMotor new]; motor.engine = [TestEngine new];
-    assert(motor.player == nil && engineStarts == 0 && starts == 0);
+    preparedMotor = motor;
+    Port0rPrepareControllerEnginesR7((void *)1, Prime);
+    assert(primeCalls == 2 && playerCreations == 0 && starts == 0 && stops == 0 && originalCalls == 0);
+    assert(!motor.engine.autoShutdownEnabled && motor.player == nil);
     assert([motor setIntensity:0.75f] == 0);
-    assert(originalCalls == 1 && lastIntensity == 0.75f && firstStartedIntensity == 0.75f);
-    assert(playerCreations == 1 && starts == 1 && motor.player.intensity == 0.75f);
-    [motor setIntensity:0];
-    assert(originalCalls == 2 && !motor.active && stops == 1);
-    [motor setIntensity:0.5f];
-    assert(originalCalls == 3 && starts == 2 && motor.player.intensity == 0.5f);
+    assert(firstStartedIntensity == 0.75f && playerCreations == 1 && starts == 1 && motor.active);
+    assert([motor setIntensity:0.75f] == 0 && starts == 1); // same active strength: no restart
+    assert([motor setIntensity:0.5f] == 0);
+    assert(starts == 2 && stops == 1 && motor.player.intensity == 0.5f);
+    assert([motor setIntensity:0] == 0 && motor.player == nil && !motor.active && stops == 2);
     TestEngine *same = motor.engine;
     hapticsForeground = NO;
     same.stoppedHandler(CHHapticEngineStoppedReasonApplicationSuspended);
     assert(motor.engine == same && motor.player == nil);
-    [motor setIntensity:0.6f];
-    assert(lastIntensity == 0 && playerCreations == 1 && engineStarts == 0);
+    assert([motor setIntensity:0.6f] == 0 && playerCreations == 2);
     ResumeMotors();
-    assert(engineStarts == 1 && motor.player == nil && playerCreations == 1);
-    [motor setIntensity:0.6f];
-    assert(lastIntensity == 0.6f && playerCreations == 2 && starts == 3);
+    assert(engineStarts == 1 && motor.player == nil && playerCreations == 2);
+    assert([motor setIntensity:0.6f] == 0 && playerCreations == 3 && starts == 3);
     same.resetHandler();
     assert(motor.player == nil);
-    [motor setIntensity:0.25f];
-    assert(engineStarts == 2 && playerCreations == 3 && lastIntensity == 0.25f);
-    nativeStatus = -7;
-    assert([motor setIntensity:0.42f] == -7 && lastIntensity == 0.42f);
-    nativeStatus = 0;
+    assert([motor setIntensity:0.25f] == 0 && engineStarts == 2 && playerCreations == 4);
+    [motor setIntensity:0];
+    failStart = YES;
+    assert([motor setIntensity:0.42f] == -1 && motor.player == nil && !motor.active);
+    failStart = NO; failCreate = YES;
+    assert([motor setIntensity:0.42f] == -1 && motor.player == nil);
+    failCreate = NO;
+    assert([motor setIntensity:0.42f] == 0);
+    failStop = YES;
+    assert([motor setIntensity:0] == -1 && !motor.active);
+    failStop = NO; same.resetHandler(); failEngine = YES;
+    assert([motor setIntensity:0.42f] == -1 && motor.player == nil);
+    failEngine = NO;
     [motor cleanup];
     assert(motor.engine == nil && motor.player == nil && liveMotors.count == 0);
     same.stoppedHandler(CHHapticEngineStoppedReasonApplicationSuspended);
     same.resetHandler();
-    assert(motor.engine == nil && motor.player == nil && liveMotors.count == 0);
-    puts("PASS: no synthetic startup request/player; first real intensity reaches original SDL unchanged, zero stops preserved and native errors forwarded");
-    puts("PASS: engine retained after suspension, foreground restart creates no player; real requests restore output and reset/cleanup remain safe");
+    assert(motor.engine == nil && motor.player == nil && originalCalls == 0);
+    puts("PASS: engine-only priming never creates/starts/stops a player; first real pattern starts at requested strength without dynamic parameters");
+    puts("PASS: changed strength replaces player, zero stops, background/reset recover engines without playback; create/start/stop/restart failures propagate");
 } return 0; }
 ''')
 subprocess.run(['xcrun','--sdk','macosx','clang','-fobjc-arc','-fsanitize=address',

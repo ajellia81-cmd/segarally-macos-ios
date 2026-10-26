@@ -13,9 +13,10 @@ imports = subprocess.check_output(['xcrun','dyld_info','-imports',str(app / 'por
 enqueue = [line for line in imports.splitlines() if '_AudioQueueEnqueueBuffer' in line]
 assert enqueue and all('libShim_AudioToolbox' in line for line in enqueue), enqueue
 fps = Path('compatibility/shim/overrides/AppKit_FPS.m').read_text()
-assert 'R6 | A %llu | S %llu | H %llu' in fps and 'Port0rAudioCallsR2' in fps
+assert 'R7 | A %llu | S %llu | H %llu' in fps and 'Port0rAudioCallsR2' in fps
 appkit_exports = set(subprocess.check_output(['xcrun','nm','-gUj',str(app / 'Frameworks/libShim_AppKit.dylib')], text=True).split())
 assert '_Port0rWarmControllerHaptics' not in appkit_exports
 assert 'Port0rWarmControllerHaptics' not in Path('compatibility/shim/overrides/AppKit_SDLPolicy.m').read_text()
-print('PASS: no exported warm-up entry and no controller-open priming path')
-print('PASS: actual runtime shims export R2 counters, guest enqueue import binds to audio shim, R6 HUD compiled')
+assert '_Port0rPrepareControllerEnginesR7' in appkit_exports
+print('PASS: old playback warm-up entry absent; engine-only preparation linked')
+print('PASS: actual runtime shims export R2 counters, guest enqueue import binds to audio shim, R7 HUD compiled')

@@ -6,7 +6,12 @@ overrides = Path('compatibility/shim/overrides').resolve()
 test = Path('build/sdl_policy_smoke.m')
 test.write_text('#define PORT0R_POLICY_TEST 1\n#import "' + str(overrides / 'AppKit_SDLPolicy.m') + '"\n' + r'''
 #include <assert.h>
-static int testRumbleCalls;
+static int testRumbleCalls, testOpens, prepareCalls;
+static void *NativeOpen(int index) { testOpens++; return index == 7 ? (void *)0x5678 : NULL; }
+void Port0rPrepareControllerEnginesR7(void *controller, int (*rumble)(void *,uint16_t,uint16_t,uint32_t)) {
+    prepareCalls++; assert(rumble == nativeRumble); assert(controller == (prepareCalls == 1 ? (void *)0x5678 : NULL));
+}
+
 static void *testRumbleController;
 static uint16_t testLow, testHigh;
 static uint32_t testDuration;
@@ -45,6 +50,7 @@ int main(void) { @autoreleasepool {
     for (int i = 0; i < PORT0R_SDL_SLOTCOUNT; ++i) table[i] = (void *)Forbidden;
     table[PORT0R_SLOT_SDL_GetVersion] = (void *)Version;
     table[PORT0R_SLOT_SDL_GameControllerRumble] = (void *)NativeRumblePassthrough;
+    table[PORT0R_SLOT_SDL_GameControllerOpen] = (void *)NativeOpen;
     table[PORT0R_SLOT_SDL_CreateWindow] = (void *)NativeCreate;
     table[PORT0R_SLOT_SDL_GetWindowFlags] = (void *)NativeFlags;
     table[PORT0R_SLOT_SDL_PollEvent] = (void *)NativePoll;
@@ -55,11 +61,14 @@ int main(void) { @autoreleasepool {
     table[PORT0R_SLOT_SDL_GameControllerGetButton] = (void *)NativeButton;
     table[PORT0R_SLOT_SDL_GameControllerName] = (void *)NativeName;
     assert(ApplyPolicy(table, sizeof table) == 0);
-    assert(testRumbleCalls == 0 && table[PORT0R_SLOT_SDL_GameControllerOpen] == (void *)Forbidden);
+    assert(testRumbleCalls == 0 && testOpens == 0 && prepareCalls == 0);
+    void *(*openController)(int) = table[PORT0R_SLOT_SDL_GameControllerOpen];
+    assert(openController(7) == (void *)0x5678 && openController(8) == NULL);
+    assert(testOpens == 2 && prepareCalls == 2);
     int (*rumble)(void *,uint16_t,uint16_t,uint32_t) = table[PORT0R_SLOT_SDL_GameControllerRumble];
     assert(rumble((void *)0x5678,123,456,20) == -7);
     assert(testRumbleCalls == 1 && testRumbleController == (void *)0x5678 && testLow == 123 && testHigh == 456 && testDuration == 20);
-    puts("PASS: opening policy injects no rumble; real controller rumble arguments/duration/result forwarded exactly once");
+    puts("PASS: controller open prepares engines and preserves NULL; real controller rumble arguments/duration/result forwarded exactly once");
     uint8_t (*readButton)(void *, int) = table[PORT0R_SLOT_SDL_GameControllerGetButton];
     assert(readButton((void *)1, 4) == 0);
     backPressed = YES;
