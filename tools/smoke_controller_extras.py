@@ -113,6 +113,7 @@ subprocess.run(['build/controller_extras_smoke'], check=True, timeout=20)
 select_test = Path('build/backbone_select_smoke.m')
 select_test.write_text('#define PORT0R_BACKBONE_TEST 1\n#import "' + str(overrides / 'AppKit_Backbone.m') + '"\n' + r'''
 #include <assert.h>
+#import <objc/runtime.h>
 static NSArray *testControllers;
 @interface SelectButton : NSObject
 @property BOOL isPressed;
