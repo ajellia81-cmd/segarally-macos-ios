@@ -65,7 +65,7 @@ static void ResumeMotors(void) {
     @synchronized (liveMotors) { motors = liveMotors.allObjects; }
     for (id motor in motors) {
         BOOL ready = RestartMotor(motor, YES);
-        NSLog(@"PORT0R R6 foreground engine ready=%d; engine only, no playback", ready);
+        NSLog(@"PORT0R R7 foreground engine ready=%d; engine only, no playback", ready);
     }
 }
 static void CleanupMotor(id motor, SEL cmd) {
@@ -159,5 +159,5 @@ __attribute__((constructor)) static void InstallMotorRecovery(void) {
     for (NSString *name in @[UIApplicationDidBecomeActiveNotification, UISceneDidActivateNotification])
         [nc addObserverForName:name object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n) { ResumeMotors(); }];
 #endif
-    NSLog(@"PORT0R R6 haptic recovery installed=%d; engine-only preparation; real playback checked", originalIntensity != NULL);
+    NSLog(@"PORT0R R7 haptic recovery installed=%d; engine-only preparation; real playback checked", originalIntensity != NULL);
 }
