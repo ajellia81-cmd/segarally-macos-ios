@@ -80,7 +80,7 @@ slots = re.findall(r'^SDL_\w+$', expanded, re.M)
 assert len(slots) > 800 and len(slots) == len(set(slots))
 names = ['SDL_GetVersion', 'SDL_CreateWindow', 'SDL_GetWindowFlags', 'SDL_SetWindowFullscreen',
          'SDL_SetWindowDisplayMode', 'SDL_SetWindowSize', 'SDL_PollEvent', 'SDL_PumpEvents',
-         'SDL_WaitEvent', 'SDL_WaitEventTimeout', 'SDL_GameControllerOpen', 'SDL_GameControllerGetButton', 'SDL_GameControllerName', 'SDL_NumJoysticks',
+         'SDL_WaitEvent', 'SDL_WaitEventTimeout', 'SDL_GameControllerOpen', 'SDL_GameControllerClose', 'SDL_GameControllerGetButton', 'SDL_GameControllerName', 'SDL_NumJoysticks',
          'SDL_GameControllerRumble', 'SDL_GameControllerRumbleTriggers',
          'SDL_GameControllerHasRumble', 'SDL_GameControllerHasRumbleTriggers']
 (root / 'shim/overrides/Port0rSDLSlots.h').write_text(
@@ -171,7 +171,7 @@ static void Port0rException(NSException *exception) {
         if (fd > STDERR_FILENO) close(fd);
         setvbuf(stdout, NULL, _IONBF, 0);
         setvbuf(stderr, NULL, _IONBF, 0);
-        NSLog(@"PORT0R R10 DIAGNOSTIC START %@ home=%@ bundle=%@ thread=%@",
+        NSLog(@"PORT0R R11 DIAGNOSTIC START %@ home=%@ bundle=%@ thread=%@",
               NSDate.date, NSHomeDirectory(), NSBundle.mainBundle.bundlePath, NSThread.currentThread);
         for (uint32_t i = 0; i < _dyld_image_count(); ++i) {
             fprintf(stderr, "IMAGE %p %s\\n", (void *)_dyld_get_image_header(i), _dyld_get_image_name(i));

@@ -1,4 +1,4 @@
-"""R10: finite real playback priming, exact game strength and checked playback.
+"""R11: engine-only preparation, exact initial strength and checked playback.
 Mock CoreHaptics hardware; keep the actual pattern construction and SDL hooks.
 """
 from pathlib import Path
@@ -14,11 +14,9 @@ test.write_text(r'''
 static int originalCalls, playerCreations, starts, stops, engineStarts;
 static BOOL failCreate, failStart, failStop, failEngine;
 static float firstStartedIntensity = -1, createdIntensity;
-static double createdDuration;
 static NSError *Failure(void) { return [NSError errorWithDomain:@"TestHaptics" code:7 userInfo:nil]; }
 static void FindIntensity(id value) {
     if ([value isKindOfClass:NSDictionary.class]) {
-        if (value[@"EventDuration"]) createdDuration = [value[@"EventDuration"] doubleValue];
         if ([value[@"ParameterID"] isEqual:@"HapticIntensity"]) createdIntensity = [value[@"ParameterValue"] floatValue];
         for (id child in [value allValues]) FindIntensity(child);
     } else if ([value isKindOfClass:NSArray.class]) {
@@ -27,7 +25,6 @@ static void FindIntensity(id value) {
 }
 @interface TestPlayer : NSObject
 @property float intensity;
-@property double duration;
 @end
 @implementation TestPlayer
 - (BOOL)startAtTime:(NSTimeInterval)time error:(NSError **)error {
@@ -42,7 +39,7 @@ static void FindIntensity(id value) {
     return YES;
 }
 - (BOOL)sendParameters:(NSArray *)parameters atTime:(NSTimeInterval)time error:(NSError **)error {
-    assert(!"R10 must not send dynamic zero/intensity parameters"); return NO;
+    assert(!"R11 must not send dynamic zero/intensity parameters"); return NO;
 }
 @end
 @interface TestEngine : NSObject
@@ -58,12 +55,12 @@ static void FindIntensity(id value) {
 }
 - (id)createPlayerWithPattern:(CHHapticPattern *)pattern error:(NSError **)error {
     if (failCreate) { if (error) *error = Failure(); return nil; }
-    playerCreations++; createdIntensity = -1; createdDuration = -1;
+    playerCreations++; createdIntensity = -1;
     NSError *exportError = nil;
     FindIntensity([pattern exportDictionaryAndReturnError:&exportError]);
     assert(!exportError);
     assert(createdIntensity >= 0 && createdIntensity <= 1);
-    TestPlayer *player = [TestPlayer new]; player.intensity = createdIntensity; player.duration = createdDuration; return player;
+    TestPlayer *player = [TestPlayer new]; player.intensity = createdIntensity; return player;
 }
 @end
 @interface SDL_RumbleMotor : NSObject
@@ -92,19 +89,10 @@ int main(void) { @autoreleasepool {
     SDL_RumbleMotor *motor = [SDL_RumbleMotor new]; motor.engine = [TestEngine new];
     preparedMotor = motor;
     Port0rPrepareControllerEnginesR7((void *)1, Prime);
-    assert(primeCalls == 2 && playerCreations == 1 && starts == 1 && stops == 0 && originalCalls == 0);
-    TestPlayer *warm = objc_getAssociatedObject(motor, &primePlayerKey);
-    assert(warm && fabs(warm.intensity - 0.7f) < 0.0001 && fabs(warm.duration - 0.120) < 0.0001);
-    assert(PrimeMotorPlayback(motor) && playerCreations == 1 && starts == 1); // once per motor
-    playerCreations = starts = stops = 0; firstStartedIntensity = -1;
+    assert(primeCalls == 2 && playerCreations == 0 && starts == 0 && stops == 0 && originalCalls == 0);
     assert(!motor.engine.autoShutdownEnabled && motor.player == nil);
     assert([motor setIntensity:0.75f] == 0);
     assert(firstStartedIntensity == 0.75f && playerCreations == 1 && starts == 1 && motor.active);
-    assert(stops == 1 && objc_getAssociatedObject(motor, &primePlayerKey) == nil); // game cancels only warm player
-    TestPlayer *game = motor.player;
-    ReleasePrimePlayer(motor, warm); // stale warm completion cannot touch game playback
-    assert(motor.player == game && motor.active && stops == 1);
-    stops = 0;
     assert([motor setIntensity:0.75f] == 0 && starts == 1); // same active strength: no restart
     assert([motor setIntensity:0.5f] == 0);
     assert(starts == 2 && stops == 1 && motor.player.intensity == 0.5f);
@@ -137,14 +125,7 @@ int main(void) { @autoreleasepool {
     same.stoppedHandler(CHHapticEngineStoppedReasonApplicationSuspended);
     same.resetHandler();
     assert(motor.engine == nil && motor.player == nil && originalCalls == 0);
-    SDL_RumbleMotor *failed = [SDL_RumbleMotor new]; failed.engine = [TestEngine new];
-    failStart = YES;
-    assert(!PrimeMotorPlayback(failed) && ![objc_getAssociatedObject(failed, &primeDoneKey) boolValue]);
-    failStart = NO;
-    assert(PrimeMotorPlayback(failed) && [objc_getAssociatedObject(failed, &primeDoneKey) boolValue]);
-    assert(failed.player == nil && !failed.active);
-    [failed cleanup];
-    puts("PASS: startup priming uses a separate finite 70% / 120ms player once; first game cancels only warm playback, stale completion cannot affect game, failed priming can be retried");
+    puts("PASS: engine-only priming never creates/starts/stops a player; first real pattern starts at requested strength without dynamic parameters");
     puts("PASS: changed strength replaces player, zero stops, background/reset recover engines without playback; create/start/stop/restart failures propagate");
 } return 0; }
 ''')
