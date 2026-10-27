@@ -104,6 +104,14 @@ EXPORT int sigaction(int sig, const struct sigaction *act, struct sigaction *old
 ''' + signal
     libc.write_text(text)
 
+    reservations = overrides / 'libSystem_Reservations.m'
+    text = reservations.read_text()
+    start = text.index('static void ShimDumpVM(')
+    end = text.index('typedef struct',start)
+    text = text[:start] + text[end:]
+    text = _once(text, '        ShimDumpVM();\n', '')
+    reservations.write_text(text)
+
     for source in overrides.glob('*.m'):
         source.write_text(quiet_nslogs(source.read_text()))
 

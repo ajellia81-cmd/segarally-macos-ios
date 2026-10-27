@@ -13,6 +13,7 @@ assert 'UILabel' not in refresh and 'MTLDrawable' not in refresh and 'atomic_' n
 runtime = (overrides / 'AppKit_RuntimeHooks.m').read_text()
 for token in ['Documents/shimdump','ShimTraceInit','ShimPacingLogInit','HookGCHandlers']:
     assert token not in runtime, token
+assert 'ShimDumpVM' not in (overrides / 'libSystem_Reservations.m').read_text()
 setup = (overrides / 'AppKit_Port0r.m').read_text()
 assert 'Port0rCleanOldFiles(NSHomeDirectory())' in setup and 'Documents/Downloads' in setup
 for token in ['dup2(', 'NSSetUncaughtExceptionHandler', 'launch.log', 'Port0rLaunchDiagnostics']:
@@ -32,7 +33,7 @@ for binary in (app / 'Frameworks').glob('libShim_*.dylib'):
     data = binary.read_bytes()
     for token in [b'_Port0rAudioCallsR2', b'_Port0rInputCallsR2', b'_Port0rHapticCallsR2',
                   b'Port0rPresentationFPS', b'Port0rLaunchDiagnostics', b'Port0rDiagnosticLog',
-                  b'ShimStatsInit', b'ShimPacingLogInit', b'HookGCHandlers', b'ShimFault', b'_NSLog\0']:
+                  b'ShimStatsInit', b'ShimPacingLogInit', b'HookGCHandlers', b'ShimFault', b'ShimDumpVM', b'_NSLog\0']:
         assert token not in data, (binary.name, token)
 imports = subprocess.check_output(['xcrun','dyld_info','-imports',str(app/'port0r')],text=True)
 enqueue = [line for line in imports.splitlines() if '_AudioQueueEnqueueBuffer' in line]
