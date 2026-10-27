@@ -1,4 +1,4 @@
-// R7: prepare engines only during controller open; never play a silent pattern.
+// R9: prepare engines, then prime real playback with a bounded 10% / 20ms event.
 // Real pulses start with their requested strength encoded in a fresh pattern.
 #import <Foundation/Foundation.h>
 #import <CoreHaptics/CoreHaptics.h>
@@ -20,6 +20,9 @@ static _Atomic bool hapticsForeground = true;
 static _Atomic uint64_t hapticRequestsR2;
 static _Thread_local BOOL preparingEngines;
 static const char currentStrengthKey;
+static const char primeDoneKey, primePlayerKey;
+static BOOL PrimeMotorPlayback(id motor);
+static void EndPrimePlayback(id motor);
 static _Atomic uint64_t stopCalls;
 uint64_t Port0rHapticCallsR2(void) { return atomic_load(&hapticRequestsR2); }
 static id MotorGet(id motor, NSString *name) {
@@ -33,6 +36,7 @@ static void InvalidateMotor(id motor, CHHapticEngine *engine) {
         if ([motor respondsToSelector:NSSelectorFromString(@"setActive:")])
             ((void (*)(id,SEL,bool))objc_msgSend)(motor, NSSelectorFromString(@"setActive:"), false);
         objc_setAssociatedObject(motor, &needsRestartKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        objc_setAssociatedObject(motor, &primePlayerKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     }
 }
 static void TrackMotor(id motor, CHHapticEngine *engine) {
@@ -51,7 +55,7 @@ static BOOL RestartMotor(id motor, BOOL force) {
         if (force || [objc_getAssociatedObject(motor, &needsRestartKey) boolValue]) {
             NSError *error = nil;
             if (![engine startAndReturnError:&error]) {
-                NSLog(@"PORT0R R8 haptic restart failed: %@", error); return NO;
+                NSLog(@"PORT0R R9 haptic restart failed: %@", error); return NO;
             }
             objc_setAssociatedObject(motor, &needsRestartKey, @NO, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
         }
@@ -65,11 +69,13 @@ static void ResumeMotors(void) {
     @synchronized (liveMotors) { motors = liveMotors.allObjects; }
     for (id motor in motors) {
         BOOL ready = RestartMotor(motor, YES);
-        NSLog(@"PORT0R R8 foreground engine ready=%d; engine only, no playback", ready);
+        if (ready) PrimeMotorPlayback(motor);
+        NSLog(@"PORT0R R9 foreground engine ready=%d; priming only if not already completed", ready);
     }
 }
 static void CleanupMotor(id motor, SEL cmd) {
     @synchronized (motor) {
+        EndPrimePlayback(motor);
         CHHapticEngine *engine = MotorGet(motor, @"engine");
         engine.stoppedHandler = ^(CHHapticEngineStoppedReason reason) {};
         engine.resetHandler = ^{};
@@ -89,8 +95,53 @@ static int StopPlayer(id motor) {
     SetMotorPlayer(motor, nil, NO);
     objc_setAssociatedObject(motor, &currentStrengthKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     uint64_t stop = atomic_fetch_add(&stopCalls, 1) + 1;
-    if (player && (stop <= 12 || !stopped || error)) NSLog(@"PORT0R R8 haptic STOP ok=%d error=%@ player=%@", stopped, error, player);
+    if (player && (stop <= 12 || !stopped || error)) NSLog(@"PORT0R R9 haptic STOP ok=%d error=%@ player=%@", stopped, error, player);
     return stopped && !error ? 0 : -1;
+}
+static void ReleasePrimePlayer(id motor, id player) {
+    if (!motor) return;
+    @synchronized (motor) {
+        if (objc_getAssociatedObject(motor, &primePlayerKey) == player)
+            objc_setAssociatedObject(motor, &primePlayerKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    }
+}
+static void EndPrimePlayback(id motor) {
+    id<CHHapticPatternPlayer> player = objc_getAssociatedObject(motor, &primePlayerKey);
+    if (player) {
+        NSError *error = nil;
+        BOOL stopped = [player stopAtTime:CHHapticTimeImmediate error:&error];
+        if (!stopped || error) NSLog(@"PORT0R R9 priming stop ok=%d error=%@", stopped, error);
+        ReleasePrimePlayer(motor, player);
+    }
+}
+static BOOL PrimeMotorPlayback(id motor) {
+    @synchronized (motor) {
+        if ([objc_getAssociatedObject(motor, &primeDoneKey) boolValue]) return YES;
+        if (!hapticsForeground) return NO;
+        CHHapticEngine *engine = MotorGet(motor, @"engine");
+        if (!engine) return NO;
+        NSError *error = nil;
+        CHHapticEventParameter *strength = [[CHHapticEventParameter alloc]
+            initWithParameterID:CHHapticEventParameterIDHapticIntensity value:0.1f];
+        // Finite pattern: it ends after 20ms even if the game event loop is busy.
+        CHHapticEvent *event = [[CHHapticEvent alloc] initWithEventType:CHHapticEventTypeHapticContinuous
+            parameters:@[strength] relativeTime:0 duration:0.020];
+        CHHapticPattern *pattern = [[CHHapticPattern alloc] initWithEvents:@[event] parameters:@[] error:&error];
+        id<CHHapticPatternPlayer> player = pattern && !error ? [engine createPlayerWithPattern:pattern error:&error] : nil;
+        BOOL started = player && !error && [player startAtTime:CHHapticTimeImmediate error:&error];
+        NSLog(@"PORT0R R9 real playback priming strength=0.10 duration=20ms ok=%d error=%@ player=%@",
+            started, error, player);
+        if (!started || error) { [player stopAtTime:CHHapticTimeImmediate error:nil]; return NO; }
+        objc_setAssociatedObject(motor, &primeDoneKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        objc_setAssociatedObject(motor, &primePlayerKey, player, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        // This player never becomes SDL's game player. Its delayed release
+        // cannot stop or change a later real pulse.
+        __weak id weakMotor = motor;
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 100 * NSEC_PER_MSEC), dispatch_get_main_queue(), ^{
+            ReleasePrimePlayer(weakMotor, player);
+        });
+        return YES;
+    }
 }
 static int SetIntensity(id motor, SEL cmd, float intensity) {
     @synchronized (motor) {
@@ -100,6 +151,7 @@ static int SetIntensity(id motor, SEL cmd, float intensity) {
         // Do not create a player, send parameters or start playback here.
         if (preparingEngines) { engine.autoShutdownEnabled = NO; return engine ? 0 : -1; }
         if (!hapticsForeground || intensity <= 0) return StopPlayer(motor);
+        EndPrimePlayback(motor);
         uint64_t event = atomic_fetch_add(&hapticRequestsR2, 1) + 1;
         if (!RestartMotor(motor, NO)) return -1;
         NSNumber *previous = objc_getAssociatedObject(motor, &currentStrengthKey);
@@ -122,7 +174,7 @@ static int SetIntensity(id motor, SEL cmd, float intensity) {
             [player stopAtTime:CHHapticTimeImmediate error:nil];
         }
         if (event <= 12 || !started || error)
-            NSLog(@"PORT0R R8 haptic START request=%llu strength=%.4f ok=%d error=%@ player=%@",
+            NSLog(@"PORT0R R9 haptic START request=%llu strength=%.4f ok=%d error=%@ player=%@",
                 (unsigned long long)event, intensity, started, error, player);
         return started && !error ? 0 : -1;
     }
@@ -135,7 +187,10 @@ void Port0rPrepareControllerEnginesR7(void *controller,
     int initialized = rumble(controller, 1, 1, 1);
     int cleared = rumble(controller, 0, 0, 0);
     preparingEngines = NO;
-    NSLog(@"PORT0R R8 engine-only preparation status=%d clear=%d elapsed=%.2fms; NO player/playback",
+    NSArray *motors;
+    @synchronized (liveMotors) { motors = liveMotors.allObjects; }
+    for (id motor in motors) PrimeMotorPlayback(motor);
+    NSLog(@"PORT0R R9 engine-only preparation status=%d clear=%d elapsed=%.2fms; separate finite playback priming checked",
         initialized, cleared, (CFAbsoluteTimeGetCurrent() - start) * 1000);
 }
 __attribute__((constructor)) static void InstallMotorRecovery(void) {
@@ -159,5 +214,5 @@ __attribute__((constructor)) static void InstallMotorRecovery(void) {
     for (NSString *name in @[UIApplicationDidBecomeActiveNotification, UISceneDidActivateNotification])
         [nc addObserverForName:name object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n) { ResumeMotors(); }];
 #endif
-    NSLog(@"PORT0R R8 haptic recovery installed=%d; engine-only preparation; real playback checked", originalIntensity != NULL);
+    NSLog(@"PORT0R R9 haptic recovery installed=%d; engine preparation + finite real playback priming", originalIntensity != NULL);
 }

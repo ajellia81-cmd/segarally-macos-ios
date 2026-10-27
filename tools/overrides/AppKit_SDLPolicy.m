@@ -95,9 +95,6 @@ static uint8_t ControllerButton(void *controller, int button) {
 }
 static int (*nativeRumble)(void *, uint16_t, uint16_t, uint32_t);
 static _Atomic uint64_t realRumbleCalls;
-// R8 comparison: a cold 80 ms pulse is accepted but not felt on device.
-// Extend only the first finite positive real request; never block or retry it.
-static _Atomic bool firstPulseUsed;
 extern void Port0rPrepareControllerEnginesR7(void *, int (*)(void *, uint16_t, uint16_t, uint32_t));
 static void *(*nativeControllerOpen)(int);
 static void *ControllerOpen(int index) {
@@ -107,15 +104,10 @@ static void *ControllerOpen(int index) {
 }
 static int RealRumble(void *controller, uint16_t low, uint16_t high, uint32_t duration) {
     uint64_t call = atomic_fetch_add(&realRumbleCalls, 1) + 1;
-    bool expected = false;
-    BOOL first = (low || high) && duration &&
-        atomic_compare_exchange_strong(&firstPulseUsed, &expected, true);
-    uint32_t effective = first && duration < 250 ? 250 : duration;
     CFAbsoluteTime start = CFAbsoluteTimeGetCurrent();
-    int result = nativeRumble(controller, low, high, effective);
-    if (first && result < 0) atomic_store(&firstPulseUsed, false);
-    if (call <= 12) NSLog(@"PORT0R R8 SDL real rumble=%llu low=%u high=%u requested=%ums effective=%ums first=%d status=%d nativeTime=%.2fms",
-        (unsigned long long)call, low, high, duration, effective, first, result, (CFAbsoluteTimeGetCurrent() - start) * 1000);
+    int result = nativeRumble(controller, low, high, duration);
+    if (call <= 12) NSLog(@"PORT0R R9 SDL real rumble=%llu low=%u high=%u duration=%ums status=%d nativeTime=%.2fms",
+        (unsigned long long)call, low, high, duration, result, (CFAbsoluteTimeGetCurrent() - start) * 1000);
     return result;
 }
 

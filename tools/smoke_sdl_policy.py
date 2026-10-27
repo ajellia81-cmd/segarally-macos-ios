@@ -67,27 +67,12 @@ int main(void) { @autoreleasepool {
     assert(openController(7) == (void *)0x5678 && openController(8) == NULL);
     assert(testOpens == 2 && prepareCalls == 2);
     int (*rumble)(void *,uint16_t,uint16_t,uint32_t) = table[PORT0R_SLOT_SDL_GameControllerRumble];
-    // Explicit zero stops do not consume the first finite real pulse.
+    assert(rumble((void *)0x5678,123,456,80) == -7);
+    assert(testRumbleCalls == 1 && testRumbleController == (void *)0x5678 && testLow == 123 && testHigh == 456 && testDuration == 80);
     rumbleStatus = 0;
-    assert(rumble((void *)0x5678,0,0,0) == 0 && testDuration == 0 && !atomic_load(&firstPulseUsed));
-    rumbleStatus = -7;
-    assert(rumble((void *)0x5678,123,456,20) == -7);
-    assert(testRumbleCalls == 2 && testRumbleController == (void *)0x5678 && testLow == 123 && testHigh == 456 && testDuration == 250);
-    assert(!atomic_load(&firstPulseUsed)); // failed native request does not use the one-time extension
-    rumbleStatus = 0;
-    assert(rumble((void *)0x5678,123,456,80) == 0 && testDuration == 250 && atomic_load(&firstPulseUsed));
-    assert(testRumbleCalls == 3);
-    assert(rumble((void *)0x5678,321,654,80) == 0 && testDuration == 80 && testLow == 321 && testHigh == 654);
-    assert(rumble((void *)0x5678,0,0,0) == 0 && testDuration == 0 && testRumbleCalls == 5);
-    // Reopening/background return does not reset the process's one-time extension.
-    assert(atomic_load(&firstPulseUsed));
-    atomic_store(&firstPulseUsed, false); // isolated long-first-pulse case
-    assert(rumble((void *)0x5678,123,456,500) == 0 && testDuration == 500);
-    assert(rumble((void *)0x5678,123,456,80) == 0 && testDuration == 80);
-    atomic_store(&firstPulseUsed, false); // infinite-duration case must not consume the first finite pulse
-    assert(rumble((void *)0x5678,123,456,0) == 0 && testDuration == 0 && !atomic_load(&firstPulseUsed));
-    assert(rumble((void *)0x5678,123,456,80) == 0 && testDuration == 250 && testRumbleCalls == 9);
-    puts("PASS: first finite positive pulse extends to 250ms once, failed call remains retryable; stops, strengths, subsequent/long/infinite durations and native status preserved without extra native calls");
+    assert(rumble((void *)0x5678,321,654,110) == 0 && testDuration == 110 && testLow == 321 && testHigh == 654);
+    assert(rumble((void *)0x5678,0,0,0) == 0 && testDuration == 0 && testRumbleCalls == 3);
+    puts("PASS: controller open preparation preserved; all real rumble strengths/durations/results including first pulse and zero stop forwarded exactly once; R8 extension removed");
     uint8_t (*readButton)(void *, int) = table[PORT0R_SLOT_SDL_GameControllerGetButton];
     assert(readButton((void *)1, 4) == 0);
     backPressed = YES;
