@@ -118,9 +118,4 @@ __attribute__((visibility("default"))) void Port0rPreparePaths(void) {
                                 [home stringByAppendingPathComponent:@"Documents/Port0r"]);
     NSLog(@"PORT0R import path status downloads=%d data=%d", downloads, data);
     Port0rImportDownloads();
-    for (NSString *file in @[@"srallyc.zip", @"segabill.zip"]) {
-        NSString *path = [[home stringByAppendingPathComponent:@"Documents/Downloads"] stringByAppendingPathComponent:file];
-        NSDictionary *attributes = [NSFileManager.defaultManager attributesOfItemAtPath:path error:nil];
-        NSLog(@"PORT0R ROM candidate %@ present=%d bytes=%@", file, attributes != nil, attributes[NSFileSize] ?: @0);
-    }
 }

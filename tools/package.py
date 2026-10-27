@@ -7,6 +7,9 @@ import shutil
 import struct
 import subprocess
 import zipfile
+import tempfile
+from native_first_haptic import verify as verify_first_haptic
+from native_guide import records as guide_records, chain as guide_chain
 
 
 def zero_fill_sections(data):
@@ -68,22 +71,28 @@ app = Path('build/SegaRally.app').resolve()
 def run(*args):
     return subprocess.check_output(args, text=True, stderr=subprocess.STDOUT)
 
+def exports(path):
+    return {x.strip() for x in run('xcrun', 'nm', '-gUj', str(path)).splitlines()
+            if x.strip().startswith('_')}
+
 p = app / 'Info.plist'
 info = plistlib.loads(p.read_bytes())
-info.update(CFBundleVersion='1027.12', Port0rBuildID='R12-20261027', CFBundleName='Sega Rally Championship', CFBundleDisplayName='Sega Rally Championship',
+info.update(CFBundleVersion='1027.13', Port0rBuildID='Release-20261027', CFBundleName='Sega Rally Championship', CFBundleDisplayName='Sega Rally Championship',
             CADisableMinimumFrameDurationOnPhone=True,
             UISupportedInterfaceOrientations=['UIInterfaceOrientationLandscapeLeft', 'UIInterfaceOrientationLandscapeRight'],
             UIFileSharingEnabled=True, LSSupportsOpeningDocumentsInPlace=True,
             GCSupportedGameControllers=[{'ProfileName': 'ExtendedGamepad'}],
             GCSupportsControllerUserInteraction=True)
 info.pop('LSMinimumSystemVersion', None)
+info.pop('SHIMTrace', None)
+info['SHIMStats'] = False
+info['MetalHudEnabled'] = False
 # User-supplied square artwork. Preserve the complete logo and both cars.
 icon = Path('assets/SegaRallyIcon.jpg').resolve()
 master = Path('build/Port0r-icon.png').resolve()
 run('sips', '-s', 'format', 'png', str(icon), '--out', str(master))
 for name, pixels in [('AppIcon60x60@2x', 120), ('AppIcon60x60@3x', 180),
-                     ('AppIcon76x76@2x', 152), ('AppIcon83.5x83.5@2x', 167),
-                     ('AppIconMarketing', 1024)]:
+                     ('AppIcon76x76@2x', 152), ('AppIcon83.5x83.5@2x', 167)]:
     run('sips', '-z', str(pixels), str(pixels), str(master), '--out', str(app / (name + '.png')))
 info['CFBundleIcons'] = {'CFBundlePrimaryIcon': {'CFBundleIconFiles': ['AppIcon60x60'],
                                                'UIPrerenderedIcon': True}}
@@ -93,6 +102,12 @@ info['CFBundleIcons~ipad'] = {'CFBundlePrimaryIcon': {
 info['CFBundleIconFiles'] = ['AppIcon60x60']
 p.write_bytes(plistlib.dumps(info))
 (app / 'embedded.mobileprovision').unlink(missing_ok=True)
+(app / 'AppIconMarketing.png').unlink(missing_ok=True)
+main = app / info['CFBundleExecutable']
+original_main = main.read_bytes()
+verify_first_haptic(original_main, patched=True)
+original_guide = guide_records(original_main)
+original_chain = guide_chain(original_main, 0x5803a8)
 machos = []
 for p in app.rglob('*'):
     if not p.is_file() or p.is_symlink():
@@ -107,9 +122,24 @@ report = {'device_launch_verified': False, 'original_resolution_percentages': 'u
           'refresh_rate': 'runtime maximumFramesPerSecond; 120 Hz capability only',
           'macho': [], 'removed_game_assets': 'Resources/srallyc cockpit packs',
           'icon': 'user supplied Sega Rally Championship artwork resized to iOS PNG sizes',
-          'signing': 'ad-hoc only, no Apple identity/profile; LiveContainer must re-sign'}
+          'signing': 'ad-hoc only, no Apple identity/profile; LiveContainer must re-sign',
+          'build': 'release without FPS/HUD, runtime counters, log capture, statistics or shader dumps',
+          'compression': 'ZIP deflate level 9; symlinks preserved',
+          'stripped_symbols': []}
 for m in machos:
+    before_bytes = m.stat().st_size
+    before_exports = exports(m)
     zero_fill_fixes = normalize_zero_fill(m)
+    run('xcrun', 'strip', '-S', '-x', str(m))
+    zero_fill_fixes.extend(normalize_zero_fill(m))
+    assert exports(m) == before_exports, m
+    report['stripped_symbols'].append({'path': str(m.relative_to(app)),
+        'before_bytes': before_bytes, 'after_bytes': m.stat().st_size,
+        'exported_symbols_preserved': len(before_exports)})
+    if m == main:
+        verify_first_haptic(m.read_bytes(), patched=True)
+        assert guide_records(m.read_bytes()) == original_guide
+        assert guide_chain(m.read_bytes(), 0x5803a8) == original_chain
     assert run('lipo', '-archs', str(m)).strip() == 'arm64', m
     version = run('vtool', '-show-build', str(m))
     assert 'platform IOS' in version, (m, version)
@@ -131,11 +161,25 @@ payload = Path('build/Payload')
 payload.mkdir(exist_ok=True)
 shutil.copytree(app, payload / app.name, symlinks=True)
 ipa = Path('build/SegaRally-LiveContainer-UNSIGNED.ipa')
-run('ditto', '-c', '-k', '--keepParent', str(payload), str(ipa))
+subprocess.run(['zip', '-q', '-9', '-r', '-y', '-X', str(ipa.resolve()), 'Payload'],
+               cwd=payload.parent, check=True)
 with zipfile.ZipFile(ipa) as z:
     assert z.testzip() is None
     assert f'Payload/{app.name}/Info.plist' in z.namelist()
     assert not any(n.endswith('embedded.mobileprovision') for n in z.namelist())
+with tempfile.TemporaryDirectory(prefix='segarally-ipa-verify-') as verify_dir:
+    run('ditto', '-x', '-k', str(ipa.resolve()), verify_dir)
+    unpacked = Path(verify_dir) / 'Payload' / app.name
+    run('codesign', '--verify', '--deep', '--strict', str(unpacked))
+    verify_first_haptic((unpacked / info['CFBundleExecutable']).read_bytes(), patched=True)
+    packed_info = plistlib.loads((unpacked / 'Info.plist').read_bytes())
+    assert packed_info['CADisableMinimumFrameDurationOnPhone'] is True
+    assert packed_info['SHIMStats'] is False and packed_info['MetalHudEnabled'] is False
+    forbidden = {'.log', '.dSYM', '.o', '.m', '.h'}
+    assert not any(x.suffix in forbidden for x in unpacked.rglob('*'))
+    assert not (unpacked / 'AppIconMarketing.png').exists()
+report['ipa_bytes'] = ipa.stat().st_size
+report['payload_bytes'] = sum(x.stat().st_size for x in app.rglob('*') if x.is_file() and not x.is_symlink())
 report['ipa_sha256'] = hashlib.sha256(ipa.read_bytes()).hexdigest()
 Path('build/validation.json').write_text(json.dumps(report, indent=2))
 print(json.dumps(report, indent=2))

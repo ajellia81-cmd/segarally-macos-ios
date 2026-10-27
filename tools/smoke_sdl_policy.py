@@ -65,6 +65,7 @@ int main(void) { @autoreleasepool {
     void *(*openController)(int) = table[PORT0R_SLOT_SDL_GameControllerOpen];
     assert(openController(7) == (void *)0x5678 && openController(8) == NULL);
     assert(testOpens == 2 && prepareCalls == 2);
+    assert(table[PORT0R_SLOT_SDL_GameControllerRumble] == (void *)NativeRumblePassthrough); // no per-rumble logging wrapper
     int (*rumble)(void *,uint16_t,uint16_t,uint32_t) = table[PORT0R_SLOT_SDL_GameControllerRumble];
     assert(rumble((void *)0x5678,123,456,20) == -7);
     assert(testRumbleCalls == 1 && testRumbleController == (void *)0x5678 && testLow == 123 && testHigh == 456 && testDuration == 20);

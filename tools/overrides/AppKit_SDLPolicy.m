@@ -4,7 +4,6 @@
 #import <dlfcn.h>
 #import <mach-o/dyld.h>
 #include <stdint.h>
-#include <stdatomic.h>
 #include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>
@@ -69,23 +68,14 @@ static BOOL RouteSelectCoin(BOOL pressed) {
 }
 
 static int (*numJoysticks)(void);
-static _Atomic uint64_t selectReadsR2;
-uint64_t Port0rInputCallsR2(void) { return atomic_load(&selectReadsR2); }
 static uint8_t (*getControllerButton)(void *, int);
 static const char *(*controllerName)(void *);
 static uint8_t ControllerButton(void *controller, int button) {
     uint8_t native = getControllerButton(controller, button);
     // Merge into SDL BACK itself: native settings/rebinding and edge detection remain intact.
     if (button != 4 || !controller) return native;
-    uint64_t reads = atomic_fetch_add(&selectReadsR2, 1);
     const char *name = controllerName(controller);
     BOOL bridge = Port0rBackboneSelect(name, numJoysticks());
-    static _Atomic bool lastNative, lastBridge;
-    BOOL previousNative = atomic_exchange(&lastNative, !!native), previousBridge = atomic_exchange(&lastBridge, bridge);
-    if (!reads || previousNative != !!native || previousBridge != bridge) {
-        NSLog(@"PORT0R R2 Select read=%llu SDL=%s devices=%d native=%u bridge=%d",
-              (unsigned long long)reads + 1, name ?: "(null)", numJoysticks(), native, bridge);
-    }
     if (numJoysticks() == 1) {
         // Suppress native BACK only while delivering its sole Coin assignment
         // via keyboard 5. This prevents two Coin paths from firing together.
@@ -94,7 +84,6 @@ static uint8_t ControllerButton(void *controller, int button) {
     return native || bridge ? 1 : 0;
 }
 static int (*nativeRumble)(void *, uint16_t, uint16_t, uint32_t);
-static _Atomic uint64_t realRumbleCalls;
 extern void Port0rPrepareControllerEnginesR7(void *, int (*)(void *, uint16_t, uint16_t, uint32_t));
 static void *(*nativeControllerOpen)(int);
 static void *ControllerOpen(int index) {
@@ -102,15 +91,6 @@ static void *ControllerOpen(int index) {
     Port0rPrepareControllerEnginesR7(controller, nativeRumble);
     return controller;
 }
-static int RealRumble(void *controller, uint16_t low, uint16_t high, uint32_t duration) {
-    uint64_t call = atomic_fetch_add(&realRumbleCalls, 1) + 1;
-    CFAbsoluteTime start = CFAbsoluteTimeGetCurrent();
-    int result = nativeRumble(controller, low, high, duration);
-    if (call <= 8) NSLog(@"PORT0R R12 SDL real rumble=%llu low=%u high=%u duration=%ums status=%d nativeTime=%.2fms",
-        (unsigned long long)call, low, high, duration, result, (CFAbsoluteTimeGetCurrent() - start) * 1000);
-    return result;
-}
-
 static int ApplyPolicy(void *raw, uint32_t bytes) {
     if (!raw || bytes != PORT0R_SDL_SLOTCOUNT * sizeof(void *)) return -1;
     void **table = raw;
@@ -122,7 +102,6 @@ static int ApplyPolicy(void *raw, uint32_t bytes) {
     nativeControllerOpen = table[PORT0R_SLOT_SDL_GameControllerOpen];
     if (!nativeRumble || !nativeControllerOpen) return -1;
     table[PORT0R_SLOT_SDL_GameControllerOpen] = (void *)ControllerOpen;
-    table[PORT0R_SLOT_SDL_GameControllerRumble] = (void *)RealRumble;
 
     numJoysticks = table[PORT0R_SLOT_SDL_NumJoysticks];
     getControllerButton = table[PORT0R_SLOT_SDL_GameControllerGetButton];

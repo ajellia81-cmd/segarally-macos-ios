@@ -1,4 +1,4 @@
-name: iOS conversion feasibility and unsigned IPA
+name: Build Sega Rally Championship iOS IPA
 
 on:
   workflow_dispatch:
@@ -101,8 +101,8 @@ jobs:
         run: python3 tools/smoke_native_guide.py
       - name: Verify truthful iOS GPU capabilities
         run: python3 tools/smoke_gpu_capabilities.py
-      - name: Verify R2 runtime hook linkage
-        run: python3 tools/smoke_runtime_r2.py
+      - name: Verify release hygiene, cleanup and runtime hook linkage
+        run: python3 tools/smoke_release.py
       - name: Preserve component license notices
         run: |
           curl -fL https://raw.githubusercontent.com/jacquesdupontd/port0r/main/THIRD-PARTY-NOTICES.txt -o build/SegaRally.app/THIRD-PARTY-NOTICES.txt
@@ -116,11 +116,11 @@ jobs:
           path: build/SegaRally-LiveContainer-UNSIGNED.ipa
           if-no-files-found: error
           retention-days: 14
-      - name: Upload diagnostic results
+      - name: Upload build validation
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: segarally-ios-conversion-diagnostics
+          name: segarally-ios-build-validation
           path: |
             build/validation.json
             build/native-guide-validation.json
@@ -128,6 +128,5 @@ jobs:
             build/gpu-capabilities-validation.txt
             build/validation.log
             build/conversion.log
-            build/shims/*.m
           if-no-files-found: warn
           retention-days: 7

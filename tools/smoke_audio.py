@@ -57,7 +57,7 @@ int main(void) { @autoreleasepool {
     int16_t routeSamples[] = {1000,-1000};
     AudioQueueBuffer routeFixture = {sizeof routeSamples, routeSamples, sizeof routeSamples, NULL, 0, NULL, 0};
     assert(AudioQueueEnqueueBuffer(testQueue, &routeFixture, 0, NULL) == noErr);
-    assert(enqueues == 1 && Port0rAudioCallsR2() == 1 && routeSamples[0] == 4000 && routeSamples[1] == -4000);
+    assert(enqueues == 1 && routeSamples[0] == 4000 && routeSamples[1] == -4000);
     puts("PASS: actual NewOutput format registration and EnqueueBuffer path quadruples PCM and forwards to native queue");
     assert(AudioQueueStart(testQueue, NULL) == noErr && starts == 1);
     OutputLifecycle(NO); OutputLifecycle(NO);
