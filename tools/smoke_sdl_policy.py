@@ -7,6 +7,7 @@ test = Path('build/sdl_policy_smoke.m')
 test.write_text('#define PORT0R_POLICY_TEST 1\n#import "' + str(overrides / 'AppKit_SDLPolicy.m') + '"\n' + r'''
 #include <assert.h>
 static int testRumbleCalls, testOpens, prepareCalls;
+static int rumbleStatus = -7;
 static void *NativeOpen(int index) { testOpens++; return index == 7 ? (void *)0x5678 : NULL; }
 void Port0rPrepareControllerEnginesR7(void *controller, int (*rumble)(void *,uint16_t,uint16_t,uint32_t)) {
     prepareCalls++; assert(rumble == nativeRumble); assert(controller == (prepareCalls == 1 ? (void *)0x5678 : NULL));
@@ -17,7 +18,7 @@ static uint16_t testLow, testHigh;
 static uint32_t testDuration;
 static int NativeRumblePassthrough(void *controller, uint16_t low, uint16_t high, uint32_t duration) {
     testRumbleCalls++; testRumbleController = controller; testLow = low; testHigh = high; testDuration = duration;
-    return -7;
+    return rumbleStatus;
 }
 static BOOL allowCoinFallback;
 static int coinDowns, coinUps;
@@ -66,9 +67,27 @@ int main(void) { @autoreleasepool {
     assert(openController(7) == (void *)0x5678 && openController(8) == NULL);
     assert(testOpens == 2 && prepareCalls == 2);
     int (*rumble)(void *,uint16_t,uint16_t,uint32_t) = table[PORT0R_SLOT_SDL_GameControllerRumble];
+    // Explicit zero stops do not consume the first finite real pulse.
+    rumbleStatus = 0;
+    assert(rumble((void *)0x5678,0,0,0) == 0 && testDuration == 0 && !atomic_load(&firstPulseUsed));
+    rumbleStatus = -7;
     assert(rumble((void *)0x5678,123,456,20) == -7);
-    assert(testRumbleCalls == 1 && testRumbleController == (void *)0x5678 && testLow == 123 && testHigh == 456 && testDuration == 20);
-    puts("PASS: controller open prepares engines and preserves NULL; real controller rumble arguments/duration/result forwarded exactly once");
+    assert(testRumbleCalls == 2 && testRumbleController == (void *)0x5678 && testLow == 123 && testHigh == 456 && testDuration == 250);
+    assert(!atomic_load(&firstPulseUsed)); // failed native request does not use the one-time extension
+    rumbleStatus = 0;
+    assert(rumble((void *)0x5678,123,456,80) == 0 && testDuration == 250 && atomic_load(&firstPulseUsed));
+    assert(testRumbleCalls == 3);
+    assert(rumble((void *)0x5678,321,654,80) == 0 && testDuration == 80 && testLow == 321 && testHigh == 654);
+    assert(rumble((void *)0x5678,0,0,0) == 0 && testDuration == 0 && testRumbleCalls == 5);
+    // Reopening/background return does not reset the process's one-time extension.
+    assert(atomic_load(&firstPulseUsed));
+    atomic_store(&firstPulseUsed, false); // isolated long-first-pulse case
+    assert(rumble((void *)0x5678,123,456,500) == 0 && testDuration == 500);
+    assert(rumble((void *)0x5678,123,456,80) == 0 && testDuration == 80);
+    atomic_store(&firstPulseUsed, false); // infinite-duration case must not consume the first finite pulse
+    assert(rumble((void *)0x5678,123,456,0) == 0 && testDuration == 0 && !atomic_load(&firstPulseUsed));
+    assert(rumble((void *)0x5678,123,456,80) == 0 && testDuration == 250 && testRumbleCalls == 9);
+    puts("PASS: first finite positive pulse extends to 250ms once, failed call remains retryable; stops, strengths, subsequent/long/infinite durations and native status preserved without extra native calls");
     uint8_t (*readButton)(void *, int) = table[PORT0R_SLOT_SDL_GameControllerGetButton];
     assert(readButton((void *)1, 4) == 0);
     backPressed = YES;
