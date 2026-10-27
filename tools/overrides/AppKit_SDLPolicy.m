@@ -106,7 +106,7 @@ static int RealRumble(void *controller, uint16_t low, uint16_t high, uint32_t du
     uint64_t call = atomic_fetch_add(&realRumbleCalls, 1) + 1;
     CFAbsoluteTime start = CFAbsoluteTimeGetCurrent();
     int result = nativeRumble(controller, low, high, duration);
-    if (call <= 12) NSLog(@"PORT0R R9 SDL real rumble=%llu low=%u high=%u duration=%ums status=%d nativeTime=%.2fms",
+    if (call <= 12) NSLog(@"PORT0R R10 SDL real rumble=%llu low=%u high=%u duration=%ums status=%d nativeTime=%.2fms",
         (unsigned long long)call, low, high, duration, result, (CFAbsoluteTimeGetCurrent() - start) * 1000);
     return result;
 }

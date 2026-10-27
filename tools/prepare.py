@@ -171,7 +171,7 @@ static void Port0rException(NSException *exception) {
         if (fd > STDERR_FILENO) close(fd);
         setvbuf(stdout, NULL, _IONBF, 0);
         setvbuf(stderr, NULL, _IONBF, 0);
-        NSLog(@"PORT0R R9 DIAGNOSTIC START %@ home=%@ bundle=%@ thread=%@",
+        NSLog(@"PORT0R R10 DIAGNOSTIC START %@ home=%@ bundle=%@ thread=%@",
               NSDate.date, NSHomeDirectory(), NSBundle.mainBundle.bundlePath, NSThread.currentThread);
         for (uint32_t i = 0; i < _dyld_image_count(); ++i) {
             fprintf(stderr, "IMAGE %p %s\\n", (void *)_dyld_get_image_header(i), _dyld_get_image_name(i));

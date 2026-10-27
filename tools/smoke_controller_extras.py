@@ -1,4 +1,4 @@
-"""R9: finite real playback priming, exact game strength and checked playback.
+"""R10: finite real playback priming, exact game strength and checked playback.
 Mock CoreHaptics hardware; keep the actual pattern construction and SDL hooks.
 """
 from pathlib import Path
@@ -42,7 +42,7 @@ static void FindIntensity(id value) {
     return YES;
 }
 - (BOOL)sendParameters:(NSArray *)parameters atTime:(NSTimeInterval)time error:(NSError **)error {
-    assert(!"R9 must not send dynamic zero/intensity parameters"); return NO;
+    assert(!"R10 must not send dynamic zero/intensity parameters"); return NO;
 }
 @end
 @interface TestEngine : NSObject
@@ -94,7 +94,7 @@ int main(void) { @autoreleasepool {
     Port0rPrepareControllerEnginesR7((void *)1, Prime);
     assert(primeCalls == 2 && playerCreations == 1 && starts == 1 && stops == 0 && originalCalls == 0);
     TestPlayer *warm = objc_getAssociatedObject(motor, &primePlayerKey);
-    assert(warm && fabs(warm.intensity - 0.1f) < 0.0001 && fabs(warm.duration - 0.020) < 0.0001);
+    assert(warm && fabs(warm.intensity - 0.7f) < 0.0001 && fabs(warm.duration - 0.120) < 0.0001);
     assert(PrimeMotorPlayback(motor) && playerCreations == 1 && starts == 1); // once per motor
     playerCreations = starts = stops = 0; firstStartedIntensity = -1;
     assert(!motor.engine.autoShutdownEnabled && motor.player == nil);
@@ -144,7 +144,7 @@ int main(void) { @autoreleasepool {
     assert(PrimeMotorPlayback(failed) && [objc_getAssociatedObject(failed, &primeDoneKey) boolValue]);
     assert(failed.player == nil && !failed.active);
     [failed cleanup];
-    puts("PASS: startup priming uses a separate finite 10% / 20ms player once; first game cancels only warm playback, stale completion cannot affect game, failed priming can be retried");
+    puts("PASS: startup priming uses a separate finite 70% / 120ms player once; first game cancels only warm playback, stale completion cannot affect game, failed priming can be retried");
     puts("PASS: changed strength replaces player, zero stops, background/reset recover engines without playback; create/start/stop/restart failures propagate");
 } return 0; }
 ''')
