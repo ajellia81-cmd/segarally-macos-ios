@@ -42,11 +42,11 @@ static void TrackMotor(id motor, CHHapticEngine *engine) {
     __weak id weakMotor = motor;
     __weak CHHapticEngine *weakEngine = engine;
     engine.stoppedHandler = ^(CHHapticEngineStoppedReason reason) {
-        NSLog(@"PORT0R R11 engine STOP motor=%@ engine=%@ reason=%ld foreground=%d", weakMotor, weakEngine, (long)reason, hapticsForeground);
+        NSLog(@"PORT0R R12 engine STOP motor=%@ engine=%@ reason=%ld foreground=%d", weakMotor, weakEngine, (long)reason, hapticsForeground);
         InvalidateMotor(weakMotor, weakEngine);
     };
     engine.resetHandler = ^{
-        NSLog(@"PORT0R R11 engine RESET motor=%@ engine=%@ foreground=%d", weakMotor, weakEngine, hapticsForeground);
+        NSLog(@"PORT0R R12 engine RESET motor=%@ engine=%@ foreground=%d", weakMotor, weakEngine, hapticsForeground);
         InvalidateMotor(weakMotor, weakEngine);
     };
 }
@@ -57,7 +57,7 @@ static BOOL RestartMotor(id motor, BOOL force) {
         if (force || [objc_getAssociatedObject(motor, &needsRestartKey) boolValue]) {
             NSError *error = nil;
             if (![engine startAndReturnError:&error]) {
-                NSLog(@"PORT0R R11 haptic restart failed: %@", error); return NO;
+                NSLog(@"PORT0R R12 haptic restart failed: %@", error); return NO;
             }
             objc_setAssociatedObject(motor, &needsRestartKey, @NO, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
         }
@@ -71,7 +71,7 @@ static void ResumeMotors(void) {
     @synchronized (liveMotors) { motors = liveMotors.allObjects; }
     for (id motor in motors) {
         BOOL ready = RestartMotor(motor, YES);
-        NSLog(@"PORT0R R11 foreground engine ready=%d; engine only, no playback", ready);
+        NSLog(@"PORT0R R12 foreground engine ready=%d; engine only, no playback", ready);
     }
 }
 static void CleanupMotor(id motor, SEL cmd) {
@@ -95,7 +95,7 @@ static int StopPlayer(id motor) {
     SetMotorPlayer(motor, nil, NO);
     objc_setAssociatedObject(motor, &currentStrengthKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     uint64_t stop = atomic_fetch_add(&stopCalls, 1) + 1;
-    if (player && (stop <= 12 || !stopped || error)) NSLog(@"PORT0R R11 haptic STOP ok=%d error=%@ player=%@", stopped, error, player);
+    if (player && (stop <= 12 || !stopped || error)) NSLog(@"PORT0R R12 haptic STOP ok=%d error=%@ player=%@", stopped, error, player);
     return stopped && !error ? 0 : -1;
 }
 static int SetIntensity(id motor, SEL cmd, float intensity) {
@@ -128,7 +128,7 @@ static int SetIntensity(id motor, SEL cmd, float intensity) {
             [player stopAtTime:CHHapticTimeImmediate error:nil];
         }
         if (event <= 12 || !started || error)
-            NSLog(@"PORT0R R11 haptic START request=%llu strength=%.4f ok=%d error=%@ player=%@",
+            NSLog(@"PORT0R R12 haptic START request=%llu strength=%.4f ok=%d error=%@ player=%@",
                 (unsigned long long)event, intensity, started, error, player);
         return started && !error ? 0 : -1;
     }
@@ -141,7 +141,7 @@ void Port0rPrepareControllerEnginesR7(void *controller,
     int initialized = rumble(controller, 1, 1, 1);
     int cleared = rumble(controller, 0, 0, 0);
     preparingEngines = NO;
-    NSLog(@"PORT0R R11 engine-only preparation status=%d clear=%d elapsed=%.2fms; NO player/playback",
+    NSLog(@"PORT0R R12 engine-only preparation status=%d clear=%d elapsed=%.2fms; NO player/playback",
         initialized, cleared, (CFAbsoluteTimeGetCurrent() - start) * 1000);
 }
 __attribute__((constructor)) static void InstallMotorRecovery(void) {
@@ -165,5 +165,5 @@ __attribute__((constructor)) static void InstallMotorRecovery(void) {
     for (NSString *name in @[UIApplicationDidBecomeActiveNotification, UISceneDidActivateNotification])
         [nc addObserverForName:name object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n) { ResumeMotors(); }];
 #endif
-    NSLog(@"PORT0R R11 haptic recovery installed=%d; engine-only preparation; real playback checked", originalIntensity != NULL);
+    NSLog(@"PORT0R R12 haptic recovery installed=%d; engine-only preparation; real playback checked", originalIntensity != NULL);
 }

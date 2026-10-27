@@ -9,7 +9,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include "Port0rSDLSlots.h"
-#include "Port0rRaceABI.h"
 
 enum { DesktopFullscreen = 0x1001 };
 typedef struct { uint8_t major, minor, patch; } PolicyVersion;
@@ -29,15 +28,14 @@ static void WindowSize(void *window, int width, int height) {
     NSLog(@"PORT0R iOS fixed window: ignored desktop resize %dx%d", width, height);
 }
 extern void Port0rWaitForForeground(void);
-static void ObserveRaceState(void);
 static int (*pollEvent)(void *);
 static void (*pumpEvents)(void);
 static int (*waitEvent)(void *);
 static int (*waitEventTimeout)(void *, int);
-static int PollEvent(void *event) { Port0rWaitForForeground(); ObserveRaceState(); return pollEvent(event); }
-static void PumpEvents(void) { Port0rWaitForForeground(); ObserveRaceState(); pumpEvents(); }
-static int WaitEvent(void *event) { Port0rWaitForForeground(); ObserveRaceState(); return waitEvent(event); }
-static int WaitEventTimeout(void *event, int timeout) { Port0rWaitForForeground(); ObserveRaceState(); return waitEventTimeout(event, timeout); }
+static int PollEvent(void *event) { Port0rWaitForForeground(); return pollEvent(event); }
+static void PumpEvents(void) { Port0rWaitForForeground(); pumpEvents(); }
+static int WaitEvent(void *event) { Port0rWaitForForeground(); return waitEvent(event); }
+static int WaitEventTimeout(void *event, int timeout) { Port0rWaitForForeground(); return waitEventTimeout(event, timeout); }
 extern BOOL Port0rBackboneSelect(const char *name, int sdlDevices);
 extern BOOL Port0rSelectCoinFallbackR3(void);
 extern void Port0rCoinKey(BOOL down);
@@ -99,87 +97,16 @@ static int (*nativeRumble)(void *, uint16_t, uint16_t, uint32_t);
 static _Atomic uint64_t realRumbleCalls;
 extern void Port0rPrepareControllerEnginesR7(void *, int (*)(void *, uint16_t, uint16_t, uint32_t));
 static void *(*nativeControllerOpen)(int);
-static void (*nativeControllerClose)(void *);
-static NSObject *controllerStateLock;
-static NSMutableDictionary<NSValue *, NSNumber *> *openControllers;
-static void EnsureControllerState(void) {
-    static dispatch_once_t once;
-    dispatch_once(&once, ^{ controllerStateLock = [NSObject new]; openControllers = [NSMutableDictionary new]; });
-}
 static void *ControllerOpen(int index) {
     void *controller = nativeControllerOpen(index);
     Port0rPrepareControllerEnginesR7(controller, nativeRumble);
-    if (controller) {
-        EnsureControllerState();
-        @synchronized (controllerStateLock) {
-            NSValue *key = [NSValue valueWithPointer:controller];
-            openControllers[key] = @([openControllers[key] unsignedIntegerValue] + 1);
-        }
-    }
     return controller;
-}
-static void ControllerClose(void *controller) {
-    EnsureControllerState();
-    // Serialize lifetime with the injected native rumble. Keep SDL's open refcounts.
-    @synchronized (controllerStateLock) {
-        NSValue *key = [NSValue valueWithPointer:controller];
-        NSUInteger count = [openControllers[key] unsignedIntegerValue];
-        if (count > 1) openControllers[key] = @(count - 1);
-        else [openControllers removeObjectForKey:key];
-        nativeControllerClose(controller);
-    }
-}
-static void (*raceTelemetry)(float *);
-static void *raceImage;
-static BOOL raceABIRejected, wasRacing;
-static CFAbsoluteTime nextRaceResolve;
-static uint64_t raceEntries;
-static void ResolveRaceTelemetry(void) {
-    if (raceTelemetry || raceABIRejected || CFAbsoluteTimeGetCurrent() < nextRaceResolve) return;
-    nextRaceResolve = CFAbsoluteTimeGetCurrent() + 1.0;
-    for (uint32_t i = 0; i < _dyld_image_count(); ++i) {
-        const char *path = _dyld_get_image_name(i);
-        if (!path || strcmp(strrchr(path, '/') ?: path, "/libtcvr_mame.dylib")) continue;
-        raceImage = dlopen(path, RTLD_NOLOAD | RTLD_LAZY);
-        void *getter = raceImage ? dlsym(raceImage, "tcvr_mame_rally_telemetry") : NULL;
-        if (!getter) return;
-        if (!Port0rRaceGetterMatches((uintptr_t)_dyld_get_image_header(i), getter)) {
-            raceABIRejected = YES;
-            NSLog(@"PORT0R R11 race telemetry ABI mismatch; race priming disabled");
-            return;
-        }
-        raceTelemetry = (void (*)(float *))getter;
-        NSLog(@"PORT0R R11 verified read-only race telemetry ABI: six floats");
-        return;
-    }
-}
-static void ObserveRaceState(void) {
-    ResolveRaceTelemetry();
-    if (!raceTelemetry) return;
-    float values[6] = {0};
-    raceTelemetry(values);
-    bool active;
-    if (!Port0rRaceFlag(values, &active)) return;
-    BOOL entered = active && !wasRacing;
-    wasRacing = active;
-    if (!entered) return;
-    ++raceEntries;
-    EnsureControllerState();
-    @synchronized (controllerStateLock) {
-        for (NSValue *key in openControllers) {
-            // Use the same native SDL path, strengths and timer mechanism as game
-            // impacts. The following SDL poll handles its normal 120ms stop.
-            int status = nativeRumble(key.pointerValue, 45875, 45875, 120);
-            NSLog(@"PORT0R R11 RACE ENTRY=%llu SDL priming low=45875 high=45875 duration=120ms status=%d",
-                (unsigned long long)raceEntries, status);
-        }
-    }
 }
 static int RealRumble(void *controller, uint16_t low, uint16_t high, uint32_t duration) {
     uint64_t call = atomic_fetch_add(&realRumbleCalls, 1) + 1;
     CFAbsoluteTime start = CFAbsoluteTimeGetCurrent();
     int result = nativeRumble(controller, low, high, duration);
-    if (call <= 12) NSLog(@"PORT0R R11 SDL real rumble=%llu low=%u high=%u duration=%ums status=%d nativeTime=%.2fms",
+    if (call <= 8) NSLog(@"PORT0R R12 SDL real rumble=%llu low=%u high=%u duration=%ums status=%d nativeTime=%.2fms",
         (unsigned long long)call, low, high, duration, result, (CFAbsoluteTimeGetCurrent() - start) * 1000);
     return result;
 }
@@ -193,10 +120,8 @@ static int ApplyPolicy(void *raw, uint32_t bytes) {
     if (version.major != 2 || version.minor != 30 || version.patch != 3) return -1;
     nativeRumble = table[PORT0R_SLOT_SDL_GameControllerRumble];
     nativeControllerOpen = table[PORT0R_SLOT_SDL_GameControllerOpen];
-    nativeControllerClose = table[PORT0R_SLOT_SDL_GameControllerClose];
-    if (!nativeRumble || !nativeControllerOpen || !nativeControllerClose) return -1;
+    if (!nativeRumble || !nativeControllerOpen) return -1;
     table[PORT0R_SLOT_SDL_GameControllerOpen] = (void *)ControllerOpen;
-    table[PORT0R_SLOT_SDL_GameControllerClose] = (void *)ControllerClose;
     table[PORT0R_SLOT_SDL_GameControllerRumble] = (void *)RealRumble;
 
     numJoysticks = table[PORT0R_SLOT_SDL_NumJoysticks];

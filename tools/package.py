@@ -70,7 +70,7 @@ def run(*args):
 
 p = app / 'Info.plist'
 info = plistlib.loads(p.read_bytes())
-info.update(CFBundleVersion='1027.11', Port0rBuildID='R11-20261027', CFBundleName='Sega Rally Championship', CFBundleDisplayName='Sega Rally Championship',
+info.update(CFBundleVersion='1027.12', Port0rBuildID='R12-20261027', CFBundleName='Sega Rally Championship', CFBundleDisplayName='Sega Rally Championship',
             CADisableMinimumFrameDurationOnPhone=True,
             UISupportedInterfaceOrientations=['UIInterfaceOrientationLandscapeLeft', 'UIInterfaceOrientationLandscapeRight'],
             UIFileSharingEnabled=True, LSSupportsOpeningDocumentsInPlace=True,

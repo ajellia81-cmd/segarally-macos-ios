@@ -82,14 +82,16 @@ jobs:
         run: python3 tools/smoke_bitmap.py
       - name: Verify SDL default audio device bridge
         run: python3 tools/smoke_audio.py
-      - name: Verify pinned race-start telemetry ABI
-        run: python3 tools/smoke_race_state.py
       - name: Verify iOS fullscreen policy for the original Mac SDL ABI
         run: python3 tools/smoke_sdl_policy.py
       - name: Verify C++ ROM import paths and touch input release
         run: python3 tools/smoke_paths_touch.py
       - name: Verify engine-only preparation and checked haptic playback
         run: python3 tools/smoke_controller_extras.py
+      - name: Verify native first-collision haptics with actual ARM64 instructions
+        run: |
+          python3 -m pip install --quiet --target build/test-deps unicorn==2.1.3
+          PYTHONPATH=build/test-deps python3 tools/smoke_first_haptic.py
       - name: Verify Guide in the original native Gamepad menu
         run: python3 tools/smoke_native_guide.py
       - name: Verify truthful iOS GPU capabilities
@@ -117,7 +119,7 @@ jobs:
           path: |
             build/validation.json
             build/native-guide-validation.json
-            build/race-state-validation.json
+            build/first-haptic-validation.json
             build/gpu-capabilities-validation.txt
             build/validation.log
             build/conversion.log

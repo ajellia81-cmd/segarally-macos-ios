@@ -4,11 +4,13 @@ import shutil
 import re
 import subprocess
 from native_guide import patch as add_native_guide
+from native_first_haptic import patch as fix_first_haptic
 
 root = Path('compatibility')
 src = Path('extracted/Port0r Rally.app/Contents')
 executable = src / 'MacOS/port0r'
-executable.write_bytes(add_native_guide(executable.read_bytes()))
+executable.write_bytes(fix_first_haptic(add_native_guide(executable.read_bytes())))
+print("Fixed native first-knock discard: preserve all other haptic gates")
 print('Extended original Gamepad menu to 13 choices, including Guide; native key 110')
 # Optional cockpit packs are game assets, not needed to build the engine.
 shutil.rmtree(src / 'Resources/srallyc', ignore_errors=True)
@@ -80,7 +82,7 @@ slots = re.findall(r'^SDL_\w+$', expanded, re.M)
 assert len(slots) > 800 and len(slots) == len(set(slots))
 names = ['SDL_GetVersion', 'SDL_CreateWindow', 'SDL_GetWindowFlags', 'SDL_SetWindowFullscreen',
          'SDL_SetWindowDisplayMode', 'SDL_SetWindowSize', 'SDL_PollEvent', 'SDL_PumpEvents',
-         'SDL_WaitEvent', 'SDL_WaitEventTimeout', 'SDL_GameControllerOpen', 'SDL_GameControllerClose', 'SDL_GameControllerGetButton', 'SDL_GameControllerName', 'SDL_NumJoysticks',
+         'SDL_WaitEvent', 'SDL_WaitEventTimeout', 'SDL_GameControllerOpen', 'SDL_GameControllerGetButton', 'SDL_GameControllerName', 'SDL_NumJoysticks',
          'SDL_GameControllerRumble', 'SDL_GameControllerRumbleTriggers',
          'SDL_GameControllerHasRumble', 'SDL_GameControllerHasRumbleTriggers']
 (root / 'shim/overrides/Port0rSDLSlots.h').write_text(
@@ -171,7 +173,7 @@ static void Port0rException(NSException *exception) {
         if (fd > STDERR_FILENO) close(fd);
         setvbuf(stdout, NULL, _IONBF, 0);
         setvbuf(stderr, NULL, _IONBF, 0);
-        NSLog(@"PORT0R R11 DIAGNOSTIC START %@ home=%@ bundle=%@ thread=%@",
+        NSLog(@"PORT0R R12 DIAGNOSTIC START %@ home=%@ bundle=%@ thread=%@",
               NSDate.date, NSHomeDirectory(), NSBundle.mainBundle.bundlePath, NSThread.currentThread);
         for (uint32_t i = 0; i < _dyld_image_count(); ++i) {
             fprintf(stderr, "IMAGE %p %s\\n", (void *)_dyld_get_image_header(i), _dyld_get_image_name(i));

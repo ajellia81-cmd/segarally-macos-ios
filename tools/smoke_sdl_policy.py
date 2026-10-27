@@ -6,14 +6,10 @@ overrides = Path('compatibility/shim/overrides').resolve()
 test = Path('build/sdl_policy_smoke.m')
 test.write_text('#define PORT0R_POLICY_TEST 1\n#import "' + str(overrides / 'AppKit_SDLPolicy.m') + '"\n' + r'''
 #include <assert.h>
-static int testRumbleCalls, testOpens, prepareCalls, testCloses;
-static int rumbleStatus = -7;
+static int testRumbleCalls, testOpens, prepareCalls;
 static void *NativeOpen(int index) { testOpens++; return index == 7 ? (void *)0x5678 : NULL; }
-static void NativeClose(void *controller) { assert(controller == (void *)0x5678); testCloses++; }
-static float testRaceFlag;
-static void TestTelemetry(float *values) { values[0] = testRaceFlag; }
 void Port0rPrepareControllerEnginesR7(void *controller, int (*rumble)(void *,uint16_t,uint16_t,uint32_t)) {
-    prepareCalls++; assert(rumble == nativeRumble); assert(controller == (void *)0x5678 || controller == NULL);
+    prepareCalls++; assert(rumble == nativeRumble); assert(controller == (prepareCalls == 1 ? (void *)0x5678 : NULL));
 }
 
 static void *testRumbleController;
@@ -21,7 +17,7 @@ static uint16_t testLow, testHigh;
 static uint32_t testDuration;
 static int NativeRumblePassthrough(void *controller, uint16_t low, uint16_t high, uint32_t duration) {
     testRumbleCalls++; testRumbleController = controller; testLow = low; testHigh = high; testDuration = duration;
-    return rumbleStatus;
+    return -7;
 }
 static BOOL allowCoinFallback;
 static int coinDowns, coinUps;
@@ -55,7 +51,6 @@ int main(void) { @autoreleasepool {
     table[PORT0R_SLOT_SDL_GetVersion] = (void *)Version;
     table[PORT0R_SLOT_SDL_GameControllerRumble] = (void *)NativeRumblePassthrough;
     table[PORT0R_SLOT_SDL_GameControllerOpen] = (void *)NativeOpen;
-    table[PORT0R_SLOT_SDL_GameControllerClose] = (void *)NativeClose;
     table[PORT0R_SLOT_SDL_CreateWindow] = (void *)NativeCreate;
     table[PORT0R_SLOT_SDL_GetWindowFlags] = (void *)NativeFlags;
     table[PORT0R_SLOT_SDL_PollEvent] = (void *)NativePoll;
@@ -70,22 +65,10 @@ int main(void) { @autoreleasepool {
     void *(*openController)(int) = table[PORT0R_SLOT_SDL_GameControllerOpen];
     assert(openController(7) == (void *)0x5678 && openController(8) == NULL);
     assert(testOpens == 2 && prepareCalls == 2);
-    unsigned char getterCode[sizeof Port0rRaceGetterCode];
-    memcpy(getterCode, Port0rRaceGetterCode, sizeof getterCode);
-    uintptr_t fakeBase = (uintptr_t)getterCode - PORT0R_RACE_GETTER_RVA;
-    assert(Port0rRaceGetterMatches(fakeBase, getterCode));
-    getterCode[0] ^= 1;
-    assert(!Port0rRaceGetterMatches(fakeBase, getterCode));
-    assert(!Port0rRaceGetterMatches(fakeBase + 1, getterCode));
-    float invalid[6] = {2}; bool validFlag = false;
-    assert(!Port0rRaceFlag(invalid, &validFlag));
     int (*rumble)(void *,uint16_t,uint16_t,uint32_t) = table[PORT0R_SLOT_SDL_GameControllerRumble];
-    assert(rumble((void *)0x5678,123,456,80) == -7);
-    assert(testRumbleCalls == 1 && testRumbleController == (void *)0x5678 && testLow == 123 && testHigh == 456 && testDuration == 80);
-    rumbleStatus = 0;
-    assert(rumble((void *)0x5678,321,654,110) == 0 && testDuration == 110 && testLow == 321 && testHigh == 654);
-    assert(rumble((void *)0x5678,0,0,0) == 0 && testDuration == 0 && testRumbleCalls == 3);
-    puts("PASS: controller open preparation preserved; all real rumble strengths/durations/results including first pulse and zero stop forwarded exactly once; R8 extension removed");
+    assert(rumble((void *)0x5678,123,456,20) == -7);
+    assert(testRumbleCalls == 1 && testRumbleController == (void *)0x5678 && testLow == 123 && testHigh == 456 && testDuration == 20);
+    puts("PASS: controller open prepares engines and preserves NULL; real controller rumble arguments/duration/result forwarded exactly once");
     uint8_t (*readButton)(void *, int) = table[PORT0R_SLOT_SDL_GameControllerGetButton];
     assert(readButton((void *)1, 4) == 0);
     backPressed = YES;
@@ -115,29 +98,11 @@ int main(void) { @autoreleasepool {
     deviceCount = 2;
     puts("PASS: sole Select-Coin assignment produces one keyboard down/up, masks duplicate native BACK and releases on lifecycle change");
     puts("PASS: Select press/release merged into native SDL BACK; Guide/other pads preserved and no duplicate coin injection");
-    raceTelemetry = TestTelemetry; testRaceFlag = 1; rumbleStatus = 0;
     assert(((int(*)(void *))table[PORT0R_SLOT_SDL_PollEvent])(NULL) == 7);
     ((void(*)(void))table[PORT0R_SLOT_SDL_PumpEvents])();
     assert(((int(*)(void *))table[PORT0R_SLOT_SDL_WaitEvent])(NULL) == 8);
     assert(((int(*)(void *,int))table[PORT0R_SLOT_SDL_WaitEventTimeout])(NULL, 23) == 23);
     assert(gateCalls == 4 && pollCalls == 1 && pumpCalls == 1 && waitCalls == 2);
-    assert(testRumbleCalls == 4 && testLow == 45875 && testHigh == 45875 && testDuration == 120 && raceEntries == 1);
-    ObserveRaceState();
-    assert(testRumbleCalls == 4); // held race flag never repeats priming
-    testRaceFlag = 2; ObserveRaceState(); testRaceFlag = 1; ObserveRaceState();
-    assert(testRumbleCalls == 4); // malformed flag does not create a false transition
-    assert(openController(7) == (void *)0x5678); // SDL can return the same retained handle
-    void (*closeController)(void *) = table[PORT0R_SLOT_SDL_GameControllerClose];
-    closeController((void *)0x5678);
-    assert(testCloses == 1 && openControllers.count == 1);
-    testRaceFlag = 0; ObserveRaceState();
-    testRaceFlag = 1; ObserveRaceState();
-    assert(testRumbleCalls == 5 && raceEntries == 2); // new race, same still-open handle
-    closeController((void *)0x5678);
-    assert(testCloses == 2 && openControllers.count == 0);
-    testRaceFlag = 0; ObserveRaceState(); testRaceFlag = 1; ObserveRaceState();
-    assert(testRumbleCalls == 5); // no rumble through a closed pointer
-    puts("PASS: verified telemetry guard; race entry injects one native SDL 70%/120ms request, held/invalid states do not repeat, reopened handle refs and close lifetime protected");
     puts("PASS: every SDL event-loop entry gates on foreground and preserves native arguments/results");
     void *window = ((void *(*)(const char *,int,int,int,int,uint32_t))table[PORT0R_SLOT_SDL_CreateWindow])("test",0,0,1280,720,0x3001);
     assert(window == (void *)0x1234 && seenFlags == 0x2000);

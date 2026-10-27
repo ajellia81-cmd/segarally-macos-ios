@@ -7,11 +7,12 @@ import subprocess
 import tarfile
 import platform
 from native_guide import patch, records, chain, PARSER, TABLE, LABELS
+from native_first_haptic import patch as fix_first_haptic, file_offset, BRANCH_VA
 
 with tarfile.open('port0r.tar.gz') as archive:
     member = next(m for m in archive.getmembers() if m.name.endswith('Contents/MacOS/port0r'))
     original = archive.extractfile(member).read()
-expected = patch(original)
+expected = fix_first_haptic(patch(original))
 prepared = Path('extracted/Port0r Rally.app/Contents/MacOS/port0r').read_bytes()
 assert prepared == expected
 choices = records(prepared)
@@ -26,6 +27,8 @@ for i in range(12):
     assert old[16:] == new[16:]
 allowed = [(0x570d68,0x570d70), (0x5833f8,0x583400), (TABLE,LABELS+12),
            (0xe2d6c,0xe2d70), (0xe2f70,0xe2f74), (0x1bf78,0x1bf78+len(PARSER))]
+branch_offset = file_offset(prepared, BRANCH_VA, 4)
+allowed.append((branch_offset, branch_offset + 4))
 assert all(any(a <= i < z for a,z in allowed) for i,(a,b) in enumerate(zip(original,prepared)) if a != b)
 assert chain(prepared,0x5803a8) == chain(original,0x5803a8) + [TABLE+i*32+f for i in range(13) for f in (0,8)]
 assert not Path('tools/overrides/AppKit_Guide.m').exists()
